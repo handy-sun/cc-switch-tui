@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.4] - 2026-05-21
+
+### Added
+
+- Codex MCP live drift detection: surface config.toml changes made outside cc-switch directly in the TUI.
+- Hermes provider catalog import: press `i` on the Providers page to import live providers from the Hermes config, merge by stable key, and create new saved providers for unrecognized entries.
+- Codex merge forward-compatibility regression guard: unknown root-level preference keys from live config are preserved by default on provider switch, so new Codex preferences are never silently discarded.
+
+### Fixed
+
+- Preserve user comments in Codex `config.toml` across provider switches; root-level, inline, and commented-out subtable comments survive in-place merge.
+- Preserve Codex MCP drift during implicit syncs so external edits to `[mcp_servers]` are not overwritten.
+- Reconcile live current provider drift: detect when `config.toml` points at a different provider than cc-switch's stored one and surface the actual live choice.
+- Sync Hermes credentials on provider switch: update `model.base_url` and `model.api_key` alongside provider and model defaults; clear stale credentials when the target provider does not supply them.
+- Delete live Hermes providers without panic on missing or malformed entries.
+- Limit failover provider switch guard to active-proxy state: allow normal provider switching when automatic failover is enabled but the local proxy is not routing traffic.
+- Absorb upstream WebDAV upload readback fix: remove probe write/read/delete round trip and post-PUT manifest GET check.
+
+### Changed
+
+- Refactor Codex merge from preference-key whitelist to provider-scoped blacklist: only `model_provider`, `model`, `model_providers`, and `projects` are hard-synced from snapshot; all other root keys follow the user-preference preservation rule.
+- Absorb upstream TUI footer shortcut refinements and prompt list order stabilization.
+
 ## [0.1.3] - 2026-05-18
 
 ### Added
@@ -81,6 +104,7 @@ Initial release of the renamed cc-switch-tui fork.
 
 - Sponsor section from README files and partner assets
 
+[0.1.4]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.4
 [0.1.3]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.3
 [0.1.2]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.2
 [0.1.1]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.1
