@@ -108,7 +108,10 @@ fn render_provider_empty_state(
             primary_style,
         )]),
     ];
-    if matches!(app_type, crate::app_config::AppType::Codex) {
+    if matches!(
+        app_type,
+        crate::app_config::AppType::Codex | crate::app_config::AppType::Hermes
+    ) {
         content_lines.push(Line::from(vec![Span::styled(
             format!("  i  {}  ", texts::tui_key_import_current_config()),
             secondary_style,
@@ -190,7 +193,10 @@ pub(super) fn render_providers(
         let mut keys = Vec::new();
         if data.providers.rows.is_empty() {
             keys.push(("Enter", texts::tui_key_import_current_config()));
-            if matches!(app.app_type, crate::app_config::AppType::Codex) {
+            if matches!(
+                app.app_type,
+                crate::app_config::AppType::Codex | crate::app_config::AppType::Hermes
+            ) {
                 keys.push(("i", texts::tui_key_import_current_config()));
             }
             keys.push(("a", texts::tui_key_add_provider()));
@@ -202,7 +208,10 @@ pub(super) fn render_providers(
             if crate::cli::tui::app::supports_temporary_provider_launch(&app.app_type) {
                 keys.push(("o", texts::tui_key_launch_temp()));
             }
-            if matches!(app.app_type, crate::app_config::AppType::Codex) {
+            if matches!(
+                app.app_type,
+                crate::app_config::AppType::Codex | crate::app_config::AppType::Hermes
+            ) {
                 keys.push(("i", texts::tui_key_import_current_config()));
             }
             keys.extend([

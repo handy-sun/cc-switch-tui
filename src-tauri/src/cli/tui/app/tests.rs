@@ -1244,6 +1244,18 @@ mod tests {
     }
 
     #[test]
+    fn hermes_providers_i_key_imports_current_config() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+
+        let action = app.on_key(key(KeyCode::Char('i')), &UiData::default());
+
+        assert!(matches!(action, Action::ProviderImportLiveConfig));
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
     fn providers_s_key_triggers_switch_action() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Providers;

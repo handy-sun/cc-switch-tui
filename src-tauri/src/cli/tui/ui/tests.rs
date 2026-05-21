@@ -1309,6 +1309,22 @@ fn codex_provider_list_key_bar_shows_import_current_config_hint() {
 }
 
 #[test]
+fn hermes_provider_list_key_bar_shows_import_current_config_hint() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Hermes));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    let data = minimal_data(&app.app_type);
+
+    let all = all_text(&render(&app, &data));
+
+    assert!(all.contains("i import current config"), "{all}");
+    assert!(all.contains("Space switch"), "{all}");
+}
+
+#[test]
 fn focused_pane_border_keeps_v500_bold_style_in_ansi256_mode() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");

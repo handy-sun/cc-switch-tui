@@ -126,7 +126,7 @@ impl App {
                 self.open_provider_add_form();
                 Action::None
             }
-            KeyCode::Char('i') if matches!(self.app_type, AppType::Codex) => {
+            KeyCode::Char('i') if matches!(self.app_type, AppType::Codex | AppType::Hermes) => {
                 Action::ProviderImportLiveConfig
             }
             KeyCode::Char('e') => {
