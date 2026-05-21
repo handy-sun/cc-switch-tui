@@ -165,6 +165,14 @@ impl AppState {
             Err(error) => log::warn!("✗ Failed to import OpenClaw providers: {error}"),
         }
 
+        match crate::services::provider::ProviderService::import_hermes_providers_from_live(self) {
+            Ok(count) if count > 0 => {
+                log::info!("✓ Imported {count} Hermes provider(s) from live config");
+            }
+            Ok(_) => log::debug!("○ No new Hermes providers to import"),
+            Err(error) => log::warn!("✗ Failed to import Hermes providers: {error}"),
+        }
+
         self.refresh_config_from_db()
     }
 

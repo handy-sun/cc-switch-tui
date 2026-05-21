@@ -237,6 +237,8 @@ impl ProviderService {
                 .map(|providers| providers.contains_key(provider_id)),
             AppType::OpenClaw => Self::valid_openclaw_live_provider_ids()
                 .map(|ids| ids.is_some_and(|ids| ids.contains(provider_id))),
+            AppType::Hermes => crate::hermes_config::get_providers()
+                .map(|providers| providers.contains_key(provider_id)),
             _ => Ok(false),
         };
 
@@ -2536,6 +2538,10 @@ impl ProviderService {
 
     pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
         live::import_opencode_providers_from_live(state)
+    }
+
+    pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+        live::import_hermes_providers_from_live(state)
     }
 }
 

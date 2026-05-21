@@ -105,6 +105,9 @@ pub(super) fn import_live_config(ctx: &mut RuntimeActionContext<'_>) -> Result<(
         crate::app_config::AppType::OpenClaw => {
             ProviderService::import_openclaw_providers_from_live(&state)? > 0
         }
+        crate::app_config::AppType::Hermes => {
+            ProviderService::import_hermes_providers_from_live(&state)? > 0
+        }
         _ => ProviderService::import_default_config(&state, ctx.app.app_type.clone())?,
     };
 

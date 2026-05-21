@@ -407,3 +407,51 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 
     Ok(imported)
 }
+
+pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    let providers = crate::hermes_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0usize;
+    let existing_ids = state.db.get_provider_ids("hermes")?;
+
+    for (id, config) in providers {
+        if id.trim().is_empty() {
+            log::warn!("Skipping Hermes provider with empty id");
+            continue;
+        }
+        if existing_ids.contains(&id) {
+            log::debug!("Hermes provider '{id}' already exists in database, skipping");
+            continue;
+        }
+        if !config.is_object() {
+            log::warn!("Skipping Hermes provider '{id}': configuration is not an object");
+            continue;
+        }
+
+        let display_name = config
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&id)
+            .to_string();
+        let mut provider = Provider::with_id(id.clone(), display_name, config, None);
+        provider.meta = Some(ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(err) = state.db.save_provider("hermes", &provider) {
+            log::warn!("Failed to import Hermes provider '{id}': {err}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported Hermes provider '{id}' from live config");
+    }
+
+    Ok(imported)
+}

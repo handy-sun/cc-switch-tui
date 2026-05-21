@@ -34,6 +34,13 @@ fn openclaw_db_providers(state: &AppState) -> IndexMap<String, Provider> {
         .expect("read OpenClaw providers from database")
 }
 
+fn hermes_db_providers(state: &AppState) -> IndexMap<String, Provider> {
+    state
+        .db
+        .get_all_providers(AppType::Hermes.as_str())
+        .expect("read Hermes providers from database")
+}
+
 fn openclaw_db_current(state: &AppState) -> Option<String> {
     state
         .db
@@ -3375,6 +3382,109 @@ fn provider_service_import_default_openclaw_skips_additive_mode() {
     assert!(
         manager.providers.is_empty(),
         "generic import_default_config should stay aligned with upstream and skip OpenClaw"
+    );
+}
+
+#[test]
+fn provider_service_import_hermes_providers_from_live_imports_existing_config_providers() {
+    let _guard = lock_test_mutex();
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let hermes_dir = home.join(".hermes");
+    std::fs::create_dir_all(&hermes_dir).expect("create hermes dir");
+    std::fs::write(
+        hermes_dir.join("config.yaml"),
+        r#"
+model:
+  provider: openrouter
+  default: anthropic/claude-sonnet-4
+custom_providers:
+  - name: openrouter
+    base_url: https://openrouter.ai/api/v1
+    api_key: sk-live-openrouter
+    models:
+      anthropic/claude-sonnet-4:
+        context_length: 200000
+  - name: groq
+    base_url: https://api.groq.com/openai/v1
+    api_key: sk-live-groq
+    models:
+      llama-4:
+        context_length: 128000
+providers:
+  ollama-local:
+    base_url: http://localhost:11434/v1
+    model: llama3.3
+"#,
+    )
+    .expect("seed hermes live config");
+
+    let mut config = MultiAppConfig::default();
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("hermes manager")
+        .providers
+        .insert(
+            "openrouter".to_string(),
+            Provider::with_id(
+                "openrouter".to_string(),
+                "Saved OpenRouter".to_string(),
+                json!({
+                    "base_url": "https://saved.example/v1",
+                    "api_key": "sk-saved",
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    let imported = ProviderService::import_hermes_providers_from_live(&state)
+        .expect("import hermes live config should succeed");
+
+    let providers = hermes_db_providers(&state);
+    assert_eq!(
+        imported, 2,
+        "import should skip existing rows and add missing custom_providers/providers entries"
+    );
+    assert_eq!(providers.len(), 3);
+    assert_eq!(
+        providers
+            .get("openrouter")
+            .expect("existing provider should be preserved")
+            .name,
+        "Saved OpenRouter"
+    );
+    assert_eq!(
+        providers
+            .get("openrouter")
+            .expect("existing provider should be preserved")
+            .settings_config["base_url"],
+        json!("https://saved.example/v1")
+    );
+
+    let groq = providers
+        .get("groq")
+        .expect("custom_providers entry should be imported");
+    assert_eq!(groq.name, "groq");
+    assert_eq!(
+        groq.settings_config["base_url"],
+        json!("https://api.groq.com/openai/v1")
+    );
+    assert_eq!(groq.settings_config["models"][0]["id"], json!("llama-4"));
+
+    let ollama = providers
+        .get("ollama-local")
+        .expect("providers dict entry should be imported");
+    assert_eq!(ollama.name, "ollama-local");
+    assert_eq!(
+        ollama.settings_config["base_url"],
+        json!("http://localhost:11434/v1")
+    );
+    assert_eq!(
+        ollama.settings_config["_cc_source"],
+        json!("providers_dict"),
+        "Hermes providers dict entries should retain their read-only source marker"
     );
 }
 
