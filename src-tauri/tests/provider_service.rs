@@ -4578,6 +4578,91 @@ fn provider_service_delete_openclaw_removes_provider_from_live_and_state() {
 }
 
 #[test]
+fn provider_service_delete_hermes_removes_custom_provider_from_live_and_state() {
+    let _guard = lock_test_mutex();
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Hermes)
+            .expect("hermes manager");
+        manager.providers.insert(
+            "keep".to_string(),
+            Provider::with_id(
+                "keep".to_string(),
+                "Keep".to_string(),
+                json!({
+                    "base_url": "https://keep.example/v1",
+                    "api_key": "sk-keep",
+                    "models": [{ "id": "keep-model" }]
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "zhima-fuli".to_string(),
+            Provider::with_id(
+                "zhima-fuli".to_string(),
+                "Zhima Fuli".to_string(),
+                json!({
+                    "base_url": "https://zhima.example/v1",
+                    "api_key": "sk-delete",
+                    "models": [{ "id": "delete-model" }]
+                }),
+                None,
+            ),
+        );
+    }
+
+    let hermes_dir = home.join(".hermes");
+    std::fs::create_dir_all(&hermes_dir).expect("create hermes dir");
+    let hermes_path = hermes_dir.join("config.yaml");
+    std::fs::write(
+        &hermes_path,
+        r#"
+custom_providers:
+  - name: keep
+    base_url: https://keep.example/v1
+    api_key: sk-keep
+  - name: zhima-fuli
+    base_url: https://zhima.example/v1
+    api_key: sk-delete
+agent:
+  max_turns: 50
+"#,
+    )
+    .expect("seed hermes live config");
+
+    let app_state = state_from_config(config);
+
+    ProviderService::delete(&app_state, AppType::Hermes, "zhima-fuli")
+        .expect("delete hermes provider should succeed");
+
+    let locked = app_state.config.read().expect("lock config after delete");
+    let manager = locked
+        .get_manager(&AppType::Hermes)
+        .expect("hermes manager after delete");
+    assert!(
+        !manager.providers.contains_key("zhima-fuli"),
+        "hermes provider should be removed from state"
+    );
+    assert!(manager.providers.contains_key("keep"));
+
+    let live_after = std::fs::read_to_string(&hermes_path).expect("read hermes config");
+    assert!(
+        !live_after.contains("zhima-fuli"),
+        "deleted provider should be removed from Hermes custom_providers"
+    );
+    assert!(live_after.contains("name: keep"));
+    assert!(
+        live_after.contains("agent:"),
+        "unrelated Hermes sections should be preserved"
+    );
+}
+
+#[test]
 fn provider_service_delete_openclaw_default_provider_allows_dangling_default_model() {
     let _guard = lock_test_mutex();
     reset_test_fs();

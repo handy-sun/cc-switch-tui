@@ -19,7 +19,7 @@ pub(super) fn populate_form_from_provider(
         AppType::Gemini => populate_gemini_form(form, provider),
         AppType::OpenCode => populate_opencode_form(form, provider),
         AppType::OpenClaw => populate_openclaw_form(form, provider),
-        AppType::Hermes => populate_openclaw_form(form, provider), // Hermes uses same additive-mode fields as OpenClaw
+        AppType::Hermes => populate_hermes_form(form, provider),
     }
 }
 
@@ -200,9 +200,26 @@ fn populate_opencode_form(form: &mut ProviderAddFormState, provider: &Provider) 
 }
 
 fn populate_openclaw_form(form: &mut ProviderAddFormState, provider: &Provider) {
+    populate_openclaw_like_form(form, provider, false);
+}
+
+fn populate_hermes_form(form: &mut ProviderAddFormState, provider: &Provider) {
+    populate_openclaw_like_form(form, provider, true);
+}
+
+fn populate_openclaw_like_form(
+    form: &mut ProviderAddFormState,
+    provider: &Provider,
+    load_normalized_aliases: bool,
+) {
     if let Some(api_key) = provider
         .settings_config
         .get("apiKey")
+        .or_else(|| {
+            load_normalized_aliases
+                .then(|| provider.settings_config.get("api_key"))
+                .flatten()
+        })
         .and_then(|value| value.as_str())
     {
         form.opencode_api_key.set(api_key);
@@ -210,6 +227,11 @@ fn populate_openclaw_form(form: &mut ProviderAddFormState, provider: &Provider) 
     if let Some(base_url) = provider
         .settings_config
         .get("baseUrl")
+        .or_else(|| {
+            load_normalized_aliases
+                .then(|| provider.settings_config.get("base_url"))
+                .flatten()
+        })
         .and_then(|value| value.as_str())
     {
         form.opencode_base_url.set(base_url);

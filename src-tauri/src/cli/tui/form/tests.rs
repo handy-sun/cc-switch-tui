@@ -2554,6 +2554,35 @@ fn provider_add_form_openclaw_ignores_legacy_api_aliases_when_loading() {
 }
 
 #[test]
+fn provider_add_form_hermes_loads_normalized_api_aliases_when_editing() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({
+            "api": "openai-completions",
+            "api_key": "sk-hermes",
+            "base_url": "https://api.hermes.example/v1",
+            "models": [
+                {
+                    "id": "primary-model",
+                    "name": "Primary Model",
+                    "contextWindow": 128000
+                }
+            ]
+        }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+
+    assert_eq!(form.opencode_api_key.value, "sk-hermes");
+    assert_eq!(
+        form.opencode_base_url.value,
+        "https://api.hermes.example/v1"
+    );
+}
+
+#[test]
 fn provider_add_form_openclaw_ignores_legacy_context_window_alias_when_loading() {
     let provider = Provider::with_id(
         "oclaw1".to_string(),

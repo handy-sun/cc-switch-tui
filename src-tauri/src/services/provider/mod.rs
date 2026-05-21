@@ -2458,6 +2458,11 @@ impl ProviderService {
                         crate::openclaw_config::remove_provider(provider_id)?;
                     }
                 }
+                AppType::Hermes => {
+                    if crate::hermes_config::get_hermes_dir().exists() {
+                        crate::hermes_config::remove_provider(provider_id)?;
+                    }
+                }
                 _ => unreachable!("non-additive apps should not enter additive delete branch"),
             }
 

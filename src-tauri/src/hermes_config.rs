@@ -741,7 +741,6 @@ pub fn set_provider(
 /// Filters out the matching entry from the `custom_providers:` sequence.
 /// No-op if the section is missing or no entry matches. The entire
 /// read-modify-write is done under the write lock to prevent TOCTOU races.
-#[cfg(test)]
 pub fn remove_provider(name: &str) -> Result<HermesWriteOutcome, AppError> {
     let _guard = hermes_write_lock().lock()?;
     let config = read_hermes_config()?;
