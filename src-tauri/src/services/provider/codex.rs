@@ -57,14 +57,15 @@ impl ProviderService {
             Value::Object(serde_json::Map::new())
         };
 
-        let mut raw_settings = serde_json::Map::new();
-        raw_settings.insert("auth".to_string(), auth);
-        raw_settings.insert("config".to_string(), Value::String(cfg_text_for_storage));
+        let raw_settings = crate::codex_config::codex_settings_snapshot_from_toml(
+            Some(auth),
+            &cfg_text_for_storage,
+        )?;
 
         let mut settings_to_store = Self::normalize_settings_config_for_storage(
             &AppType::Codex,
             &provider,
-            Value::Object(raw_settings),
+            raw_settings,
             common_snippet.as_deref(),
         )?;
         Self::restore_codex_model_provider_for_storage_best_effort(
@@ -1232,15 +1233,14 @@ impl ProviderService {
             let text_for_storage =
                 Self::strip_codex_runtime_local_keys_from_snapshot_config(&text)?;
 
-            let mut raw_settings = serde_json::Map::new();
-            if let Some(auth) = auth.clone() {
-                raw_settings.insert("auth".to_string(), auth);
-            }
-            raw_settings.insert("config".to_string(), Value::String(text_for_storage));
+            let raw_settings = crate::codex_config::codex_settings_snapshot_from_toml(
+                auth.clone(),
+                &text_for_storage,
+            )?;
             Self::normalize_settings_config_for_storage(
                 &AppType::Codex,
                 &current_provider,
-                Value::Object(raw_settings),
+                raw_settings,
                 config.common_config_snippets.codex.as_deref(),
             )?
         } else {

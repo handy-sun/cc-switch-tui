@@ -641,6 +641,14 @@ wire_api = "responses"
             json!("live-codex-key")
         );
         assert!(
+            provider.settings_config.get("config").is_none(),
+            "startup Codex live import should not persist legacy whole-file config strings"
+        );
+        assert!(
+            provider.settings_config.get("codex").is_some(),
+            "startup Codex live import should persist structured settingsConfig.codex"
+        );
+        assert!(
             crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
                 .expect("Codex settings should render to config.toml")
                 .contains("model_provider = \"legacy\"")
@@ -899,6 +907,16 @@ requires_openai_auth = true
                 .unwrap_or_else(|| panic!("{provider_id} should be seeded"));
             assert_eq!(provider.name, name);
             assert_eq!(provider.category.as_deref(), Some("official"));
+            if app == "codex" {
+                assert!(
+                    provider.settings_config.get("config").is_none(),
+                    "Codex official seed should not store legacy whole-file config strings"
+                );
+                assert!(
+                    provider.settings_config.get("codex").is_some(),
+                    "Codex official seed should store structured settingsConfig.codex"
+                );
+            }
         }
     }
 

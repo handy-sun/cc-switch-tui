@@ -544,15 +544,14 @@ impl ProviderService {
                     common_snippet_for_strip.clone()
                 };
 
-                let mut raw_settings = serde_json::Map::new();
-                if let Some(auth) = auth {
-                    raw_settings.insert("auth".to_string(), auth);
-                }
-                raw_settings.insert("config".to_string(), Value::String(cfg_text_for_storage));
+                let raw_settings = crate::codex_config::codex_settings_snapshot_from_toml(
+                    auth,
+                    &cfg_text_for_storage,
+                )?;
                 let mut settings_to_store = Self::normalize_settings_config_for_storage(
                     app_type,
                     &provider,
-                    Value::Object(raw_settings),
+                    raw_settings,
                     effective_common_snippet.as_deref(),
                 )?;
                 Self::restore_codex_model_provider_for_storage_best_effort(
@@ -1440,7 +1439,7 @@ impl ProviderService {
                 }
                 let auth: Value = read_json_file(&auth_path)?;
                 let config_str = crate::codex_config::read_and_validate_codex_config_text()?;
-                json!({ "auth": auth, "config": config_str })
+                crate::codex_config::codex_settings_snapshot_from_toml(Some(auth), &config_str)?
             }
             AppType::Claude => {
                 let settings_path = get_claude_settings_path();

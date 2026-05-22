@@ -32,7 +32,7 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         website_url: "https://chatgpt.com/codex",
         icon: "openai",
         icon_color: "#00A67E",
-        settings_config_json: r#"{"auth":{},"config":""}"#,
+        settings_config_json: r#"{"auth":{},"codex":{}}"#,
     },
     OfficialProviderSeed {
         id: "gemini-official",

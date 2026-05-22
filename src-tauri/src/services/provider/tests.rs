@@ -120,6 +120,14 @@ fn capture_codex_temp_launch_snapshot_persists_auth_and_config() {
         Some("new-refresh")
     );
     let stored_config = codex_config_text(&provider.settings_config);
+    assert!(
+        provider.settings_config.get("config").is_none(),
+        "captured Codex temp snapshots should not persist legacy whole-file config strings"
+    );
+    assert!(
+        provider.settings_config.get("codex").is_some(),
+        "captured Codex temp snapshots should persist structured settingsConfig.codex"
+    );
     assert!(stored_config.contains("model_reasoning_effort = \"high\""));
     assert!(
         !stored_config.contains("mcp_servers"),

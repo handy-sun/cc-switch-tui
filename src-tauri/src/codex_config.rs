@@ -305,6 +305,21 @@ pub fn codex_config_text_from_settings(settings: &Value) -> Result<String, AppEr
     }
 }
 
+pub fn codex_settings_snapshot_from_toml(
+    auth: Option<Value>,
+    config_toml: &str,
+) -> Result<Value, AppError> {
+    let mut settings = serde_json::Map::new();
+    if let Some(auth) = auth {
+        settings.insert("auth".to_string(), auth);
+    }
+    settings.insert(
+        CODEX_STRUCTURED_CONFIG_KEY.to_string(),
+        codex_structured_config_from_toml(config_toml)?,
+    );
+    Ok(Value::Object(settings))
+}
+
 pub fn set_codex_config_text_in_settings(
     settings: &mut Value,
     config_toml: &str,
