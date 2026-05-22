@@ -52,7 +52,8 @@ impl ProviderService {
                 .to_string()
         };
         crate::codex_config::validate_config_toml(&cfg_text)?;
-        let cfg_text_for_storage = Self::strip_codex_mcp_servers_from_snapshot_config(&cfg_text)?;
+        let cfg_text_for_storage =
+            Self::strip_codex_runtime_local_keys_from_snapshot_config(&cfg_text)?;
 
         let auth_path = codex_home.join("auth.json");
         let auth = if auth_path.exists() {
@@ -165,7 +166,7 @@ impl ProviderService {
         Ok(())
     }
 
-    pub(super) fn strip_codex_mcp_servers_from_snapshot_config(
+    pub(super) fn strip_codex_runtime_local_keys_from_snapshot_config(
         config_toml: &str,
     ) -> Result<String, AppError> {
         let config_toml = config_toml.trim();
@@ -178,6 +179,8 @@ impl ProviderService {
             .map_err(|e| AppError::Config(format!("TOML parse error: {e}")))?;
         let root = doc.as_table_mut();
         root.remove("mcp_servers");
+        root.remove("projects");
+        root.remove("trusted_workspaces");
 
         if let Some(mcp_item) = root.get_mut("mcp") {
             if let Some(mcp_table) = mcp_item.as_table_like_mut() {
@@ -1226,12 +1229,14 @@ impl ProviderService {
             let text =
                 std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
             Self::maybe_update_codex_common_config_snippet(config, &text)?;
+            let text_for_storage =
+                Self::strip_codex_runtime_local_keys_from_snapshot_config(&text)?;
 
             let mut raw_settings = serde_json::Map::new();
             if let Some(auth) = auth.clone() {
                 raw_settings.insert("auth".to_string(), auth);
             }
-            raw_settings.insert("config".to_string(), Value::String(text));
+            raw_settings.insert("config".to_string(), Value::String(text_for_storage));
             Self::normalize_settings_config_for_storage(
                 &AppType::Codex,
                 &current_provider,

@@ -502,10 +502,12 @@ pub fn restore_codex_settings_config_model_provider_for_backfill(
 /// - `[mcp_servers]` is **never** overwritten from the snapshot. The user's live
 ///   `[mcp_servers]` content (active subtables, commented-out subtables, and any
 ///   loose comments around them) is preserved verbatim.
+/// - Codex runtime trust keys (`projects`, `trusted_workspaces`) are also never
+///   overwritten from the snapshot. Trust decisions are tied to local
+///   workspaces, not to the selected model provider.
 /// - The narrow set in [`PROVIDER_SCOPED_KEYS`] is treated as **provider-scoped**:
 ///   the snapshot is authoritative, live entries the snapshot doesn't cover are
-///   removed (so e.g. runtime trust under `[projects]` from the previous provider
-///   doesn't leak into the new one).
+///   removed (so e.g. `[model_providers.OLD]` doesn't leak into the new one).
 /// - Every other root-level entry is treated as **user-owned**:
 ///     - `preserve_user_preferences = true` (provider switch with applyCommonConfig
 ///       honored): live wins when present; falls back to snapshot otherwise so an
@@ -527,13 +529,13 @@ pub fn restore_codex_settings_config_model_provider_for_backfill(
 /// - `model` — currently-selected model name, conventionally per-provider.
 /// - `profile` — selected profile name, paired with `[profiles]`.
 /// - `model_providers` — provider definitions; replaced wholesale per snapshot.
-/// - `projects` — per-provider runtime trust list.
 /// - `profiles` — may point at provider-specific `model_provider` keys.
 pub fn merge_provider_into_codex_live_config(
     live_text: &str,
     provider_snapshot: &str,
     preserve_user_preferences: bool,
 ) -> Result<String, AppError> {
+    const LIVE_RUNTIME_KEYS: &[&str] = &["mcp_servers", "projects", "trusted_workspaces"];
     /// Root-level keys whose value must strictly follow the active provider's
     /// snapshot. Anything not listed here is treated as user-owned and follows
     /// the `preserve_user_preferences` rules above, so adding a new preference
@@ -543,7 +545,6 @@ pub fn merge_provider_into_codex_live_config(
         "model",
         "profile",
         "model_providers",
-        "projects",
         "profiles",
     ];
 
@@ -565,17 +566,16 @@ pub fn merge_provider_into_codex_live_config(
 
     // Step 1: figure out which live entries to drop.
     //
-    // - `[mcp_servers]` is never touched.
+    // - Live runtime keys are never touched.
     // - Provider-scoped keys are dropped when the snapshot does not provide
-    //   them, so the previous provider's [projects] / [model_providers.OLD]
-    //   don't leak.
+    //   them, so the previous provider's [model_providers.OLD] doesn't leak.
     // - User-owned keys (everything else) are dropped only when
     //   `preserve_user_preferences = false` AND the snapshot does not provide
     //   them, so common-snippet residue gets cleared but ordinary user
     //   preferences are kept on a normal switch.
     let live_keys: Vec<String> = live.as_table().iter().map(|(k, _)| k.to_string()).collect();
     for key in live_keys {
-        if key == "mcp_servers" {
+        if LIVE_RUNTIME_KEYS.contains(&key.as_str()) {
             continue;
         }
         if snap.get(&key).is_some() {
@@ -587,7 +587,7 @@ pub fn merge_provider_into_codex_live_config(
         }
     }
 
-    // Step 2: overlay every snapshot entry except [mcp_servers].
+    // Step 2: overlay every snapshot entry except live runtime keys.
     //
     // - Provider-scoped keys always overwrite live (the snapshot is the source
     //   of truth for these).
@@ -597,7 +597,7 @@ pub fn merge_provider_into_codex_live_config(
     //   value so initial writes get seeded.
     let snap_keys: Vec<String> = snap.as_table().iter().map(|(k, _)| k.to_string()).collect();
     for key in snap_keys {
-        if key == "mcp_servers" {
+        if LIVE_RUNTIME_KEYS.contains(&key.as_str()) {
             continue;
         }
         let is_provider_scoped = PROVIDER_SCOPED_KEYS.contains(&key.as_str());
@@ -749,13 +749,53 @@ mod tests {
         assert_eq!(doc["approval_mode"].as_str(), Some("auto-edit"));
         assert_eq!(doc["check_for_update_on_startup"].as_bool(), Some(false));
 
-        // [projects] comes from snapshot (provider isolation)
-        assert!(doc.get("projects").unwrap().get("/tmp/other").is_some());
-        assert!(doc.get("projects").unwrap().get("/tmp/work").is_none());
+        // [projects] comes from live because trust decisions are workspace-local.
+        assert!(doc.get("projects").unwrap().get("/tmp/work").is_some());
+        assert!(doc.get("projects").unwrap().get("/tmp/other").is_none());
 
         // [mcp_servers] comes from live (preserves comments and manual edits)
         assert!(doc.get("mcp_servers").is_some());
         assert!(doc.get("mcp_servers").unwrap().get("cargo-mcp").is_some());
+    }
+
+    #[test]
+    fn merge_preserves_live_runtime_projects_from_provider_snapshot() {
+        let live = indoc::indoc! {r#"
+            model_provider = "old-provider"
+            trusted_workspaces = ["/tmp/live-workspace"]
+
+            [model_providers.old-provider]
+            name = "Old"
+
+            [projects."/tmp/live-project"]
+            trust_level = "trusted"
+        "#};
+
+        let snapshot = indoc::indoc! {r#"
+            model_provider = "new-provider"
+            trusted_workspaces = ["/tmp/snapshot-workspace"]
+
+            [model_providers.new-provider]
+            name = "New"
+
+            [projects."/tmp/snapshot-project"]
+            trust_level = "trusted"
+        "#};
+
+        let merged = merge_provider_into_codex_live_config(live, snapshot, true).unwrap();
+        let doc: toml_edit::DocumentMut = merged.parse().unwrap();
+        let projects = doc.get("projects").expect("projects should be preserved");
+        let trusted_workspaces = doc["trusted_workspaces"]
+            .as_array()
+            .expect("trusted_workspaces should be preserved");
+
+        assert!(projects.get("/tmp/live-project").is_some());
+        assert!(projects.get("/tmp/snapshot-project").is_none());
+        assert_eq!(trusted_workspaces.len(), 1);
+        assert_eq!(
+            trusted_workspaces.get(0).and_then(|value| value.as_str()),
+            Some("/tmp/live-workspace")
+        );
     }
 
     #[test]

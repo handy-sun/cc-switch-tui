@@ -828,7 +828,7 @@ fn codex_switch_preserves_base_url_and_wire_api_across_multiple_switches() {
 
 #[test]
 #[serial]
-fn codex_switch_backfills_effective_current_and_preserves_runtime_projects() {
+fn codex_switch_preserves_live_runtime_projects_without_storing_them_per_provider() {
     let temp_home = TempDir::new().expect("create temp home");
     let _env = EnvGuard::set_home(temp_home.path());
     std::fs::create_dir_all(crate::codex_config::get_codex_config_dir())
@@ -860,7 +860,7 @@ fn codex_switch_backfills_effective_current_and_preserves_runtime_projects() {
                 "Provider Two".to_string(),
                 json!({
                     "auth": { "OPENAI_API_KEY": "sk-two" },
-                    "config": "model_provider = \"two\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.two]\nbase_url = \"https://api.two.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+                    "config": "model_provider = \"two\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.two]\nbase_url = \"https://api.two.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n\n[projects.\"/tmp/codex-project-b\"]\ntrust_level = \"trusted\"\n",
                 }),
                 None,
             ),
@@ -907,12 +907,24 @@ trust_level = "trusted"
         .and_then(Value::as_str)
         .expect("p1 config should be string");
     assert!(
-        p1_stored.contains("[projects.\"/tmp/codex-project-a\"]"),
-        "effective current provider should receive runtime project trust"
+        !p1_stored.contains("[projects."),
+        "runtime project trust should remain live-local, not be stored in provider snapshots"
     );
     assert!(
         p1_stored.contains("base_url = \"https://api.one-live.example/v1\""),
         "effective current provider should receive live provider settings"
+    );
+    let p2_stored = manager
+        .providers
+        .get("p2")
+        .expect("p2 exists")
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)
+        .expect("p2 config should be string");
+    assert!(
+        !p2_stored.contains("[projects."),
+        "refreshed target provider snapshot should not keep runtime project trust"
     );
     assert!(
         cfg.common_config_snippets
@@ -935,14 +947,18 @@ trust_level = "trusted"
         .and_then(Value::as_str)
         .expect("db p1 config should be string");
     assert!(
-        db_p1_config.contains("[projects.\"/tmp/codex-project-a\"]"),
-        "state.save should not overwrite the effective-current backfill with stale memory"
+        !db_p1_config.contains("[projects."),
+        "state.save should persist provider snapshots without runtime project trust"
     );
 
     let p2_live = std::fs::read_to_string(get_codex_config_path()).expect("read p2 live config");
     assert!(
-        !p2_live.contains("/tmp/codex-project-a"),
-        "target provider live config should not absorb source provider runtime project trust"
+        p2_live.contains("[projects.\"/tmp/codex-project-a\"]"),
+        "switching providers should preserve live runtime project trust"
+    );
+    assert!(
+        !p2_live.contains("/tmp/codex-project-b"),
+        "target provider snapshot should not overwrite live runtime project trust"
     );
 
     ProviderService::switch(&state, AppType::Codex, "p1").expect("switch back to p1");

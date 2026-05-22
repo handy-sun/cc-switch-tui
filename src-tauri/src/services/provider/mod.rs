@@ -504,7 +504,7 @@ impl ProviderService {
                 let common_snippet_extracted =
                     Self::extract_codex_common_config_from_config_toml(&cfg_text)?;
                 let cfg_text_for_storage =
-                    Self::strip_codex_mcp_servers_from_snapshot_config(&cfg_text)?;
+                    Self::strip_codex_runtime_local_keys_from_snapshot_config(&cfg_text)?;
 
                 let (provider, common_snippet_for_strip) = {
                     let guard = state.config.read().map_err(AppError::from)?;
