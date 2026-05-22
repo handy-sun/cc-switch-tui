@@ -26,6 +26,20 @@ fn dds_template_index(app_type: AppType) -> usize {
     template_index_by_label(app_type, "* DDS")
 }
 
+fn codex_form_config_text(provider: &serde_json::Value) -> String {
+    let settings = &provider["settingsConfig"];
+    assert!(
+        settings.get("config").is_none(),
+        "new Codex form output should not store the whole config.toml string"
+    );
+    assert!(
+        settings.get("codex").is_some(),
+        "new Codex form output should include structured settingsConfig.codex"
+    );
+    crate::codex_config::codex_config_text_from_settings(settings)
+        .expect("Codex settings should render to config.toml")
+}
+
 #[test]
 fn provider_add_form_template_labels_use_ascii_prefix_for_packycode() {
     let form = ProviderAddFormState::new(AppType::Claude);
@@ -175,9 +189,7 @@ fn provider_add_form_dds_template_codex_sets_base_url_and_partner_meta() {
     let provider = form.to_provider_json_value();
     assert_eq!(provider["name"], "DDS");
     assert_eq!(provider["websiteUrl"], "https://www.ddshub.cc");
-    let cfg = provider["settingsConfig"]["config"]
-        .as_str()
-        .expect("settingsConfig.config should be string");
+    let cfg = codex_form_config_text(&provider);
     assert!(cfg.contains("base_url = \"https://www.ddshub.cc\""));
     assert!(cfg.contains("model = \"gpt-5.4\""));
     assert!(cfg.contains("wire_api = \"responses\""));
@@ -240,9 +252,7 @@ fn provider_add_form_rightcode_template_codex_sets_base_url_and_partner_meta() {
     let provider = form.to_provider_json_value();
     assert_eq!(provider["name"], "RightCode");
     assert_eq!(provider["websiteUrl"], "https://right.codes");
-    let cfg = provider["settingsConfig"]["config"]
-        .as_str()
-        .expect("settingsConfig.config should be string");
+    let cfg = codex_form_config_text(&provider);
     assert!(cfg.contains("base_url = \"https://right.codes/codex/v1\""));
     let meta = provider["meta"]
         .as_object()
@@ -484,9 +494,7 @@ fn provider_add_form_packycode_template_codex_sets_partner_meta_and_base_url() {
     let provider = form.to_provider_json_value();
     assert_eq!(provider["name"], "PackyCode");
     assert_eq!(provider["websiteUrl"], "https://www.packyapi.com");
-    let cfg = provider["settingsConfig"]["config"]
-        .as_str()
-        .expect("settingsConfig.config should be string");
+    let cfg = codex_form_config_text(&provider);
     assert!(cfg.contains("model_provider ="));
     assert!(cfg.contains("[model_providers."));
     assert!(cfg.contains("base_url = \"https://www.packyapi.com/v1\""));
@@ -541,9 +549,7 @@ fn provider_add_form_aicodemirror_template_codex_preserves_third_party_auth_beha
     let provider = form.to_provider_json_value();
     assert_eq!(provider["name"], "AICodeMirror");
     assert_eq!(provider["websiteUrl"], "https://www.aicodemirror.com");
-    let cfg = provider["settingsConfig"]["config"]
-        .as_str()
-        .expect("settingsConfig.config should be string");
+    let cfg = codex_form_config_text(&provider);
     assert!(cfg.contains("base_url = \"https://api.aicodemirror.com/api/codex/backend-api/codex\""));
     assert!(cfg.contains("model = \"gpt-5.4\""));
     assert!(cfg.contains("wire_api = \"responses\""));
@@ -834,9 +840,7 @@ fn provider_add_form_codex_builds_full_toml_config() {
         provider["settingsConfig"]["auth"]["OPENAI_API_KEY"],
         "sk-test"
     );
-    let cfg = provider["settingsConfig"]["config"]
-        .as_str()
-        .expect("settingsConfig.config should be string");
+    let cfg = codex_form_config_text(&provider);
     assert!(cfg.contains("model_provider ="));
     assert!(cfg.contains("[model_providers."));
     assert!(cfg.contains("base_url = \"https://api.openai.com/v1\""));
@@ -874,9 +878,7 @@ requires_openai_auth = true
     form.codex_base_url.set("https://changed.example/v1");
 
     let out = form.to_provider_json_value();
-    let cfg = out["settingsConfig"]["config"]
-        .as_str()
-        .expect("settingsConfig.config should be string");
+    let cfg = codex_form_config_text(&out);
     assert!(
         cfg.contains("network_access = true"),
         "existing Codex config.toml keys should be preserved"
@@ -1091,7 +1093,8 @@ fn provider_add_form_codex_official_roundtrip_preserves_auth_and_strips_provider
         "official Codex provider should keep the stored auth snapshot"
     );
     assert_eq!(
-        out["settingsConfig"]["config"], "model_reasoning_effort = \"high\"",
+        codex_form_config_text(&out),
+        "model_reasoning_effort = \"high\"",
         "official Codex provider should drop provider-level base_url/model settings on save"
     );
 }
@@ -1105,7 +1108,7 @@ fn provider_add_form_codex_official_seed_roundtrip_keeps_empty_auth_and_config()
 
     let out = form.to_provider_json_value();
     assert_eq!(out["settingsConfig"]["auth"], json!({}));
-    assert_eq!(out["settingsConfig"]["config"], "");
+    assert_eq!(codex_form_config_text(&out), "");
 }
 
 #[test]

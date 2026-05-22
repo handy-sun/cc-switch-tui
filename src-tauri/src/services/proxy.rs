@@ -1574,9 +1574,28 @@ impl ProxyService {
                     }
                 }
 
-                if let Some(config_text) = live.get("config").and_then(Value::as_str) {
-                    live["config"] =
-                        json!(codex_toml::remove_loopback_base_url_from_toml(config_text));
+                let has_codex_config = live
+                    .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+                    .is_some()
+                    || live
+                        .get(crate::codex_config::CODEX_LEGACY_CONFIG_KEY)
+                        .is_some();
+                if has_codex_config {
+                    let config_text =
+                        crate::codex_config::codex_config_text_from_settings(&live)
+                            .map_err(|error| format!("render Codex config failed: {error}"))?;
+                    let prefer_structured = live
+                        .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+                        .is_some()
+                        && live
+                            .get(crate::codex_config::CODEX_LEGACY_CONFIG_KEY)
+                            .is_none();
+                    crate::codex_config::set_codex_config_text_in_settings(
+                        &mut live,
+                        &codex_toml::remove_loopback_base_url_from_toml(&config_text),
+                        prefer_structured,
+                    )
+                    .map_err(|error| format!("update Codex config failed: {error}"))?;
                 }
             }
             AppType::Gemini => {
@@ -1658,11 +1677,24 @@ impl ProxyService {
         let auth = config
             .get("auth")
             .filter(|value| !value.as_object().is_some_and(|object| object.is_empty()));
-        let config_text = config.get("config").and_then(Value::as_str);
+        let has_config = config
+            .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+            .is_some()
+            || config
+                .get(crate::codex_config::CODEX_LEGACY_CONFIG_KEY)
+                .is_some();
+        let config_text = if has_config {
+            Some(
+                crate::codex_config::codex_config_text_from_settings(config)
+                    .map_err(|error| format!("render Codex config failed: {error}"))?,
+            )
+        } else {
+            None
+        };
         let auth_path = get_codex_auth_path();
 
         // Proxy restore applies the saved backup config without another stable-provider rewrite.
-        match (auth, config_text) {
+        match (auth, config_text.as_deref()) {
             (Some(auth), Some(config_text)) => write_codex_live_atomic(auth, Some(config_text))
                 .map_err(|error| format!("write Codex live config failed: {error}")),
             (Some(auth), None) => write_json_file(&get_codex_auth_path(), auth)

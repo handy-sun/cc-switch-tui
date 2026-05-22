@@ -92,7 +92,9 @@ fn sync_codex_provider_writes_auth_and_config() {
         "auth": {
             "OPENAI_API_KEY": "codex-key"
         },
-        "config": r#"base_url = "https://codex.test""#
+        "codex": {
+            "base_url": "https://codex.test"
+        }
     });
 
     let provider = Provider::with_id(

@@ -5,7 +5,6 @@ use crate::error::AppError;
 use crate::provider::Provider;
 use crate::store::AppState;
 use chrono::Utc;
-use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -318,9 +317,9 @@ impl ConfigService {
                 "供应商 {provider_id} 的 Codex auth 配置必须是 JSON 对象"
             )));
         }
-        let cfg_text = settings.get("config").and_then(Value::as_str);
+        let cfg_text = crate::codex_config::codex_config_text_from_settings(&effective)?;
 
-        crate::codex_config::write_codex_live_atomic(auth, cfg_text)?;
+        crate::codex_config::write_codex_live_atomic(auth, Some(&cfg_text))?;
         crate::mcp::sync_enabled_to_codex(config)?;
 
         let cfg_text_after = crate::codex_config::read_and_validate_codex_config_text()?;
@@ -329,8 +328,8 @@ impl ConfigService {
                 let mut raw_settings = serde_json::Map::new();
                 raw_settings.insert("auth".to_string(), auth.clone());
                 raw_settings.insert(
-                    "config".to_string(),
-                    serde_json::Value::String(cfg_text_after),
+                    crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY.to_string(),
+                    crate::codex_config::codex_structured_config_from_toml(&cfg_text_after)?,
                 );
                 target.settings_config = ProviderService::normalize_settings_config_for_storage(
                     &AppType::Codex,
