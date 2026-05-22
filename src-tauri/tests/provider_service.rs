@@ -259,11 +259,9 @@ command = "echo"
         .providers
         .get("new-provider")
         .expect("new provider exists");
-    let new_config_text = new_provider
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+    let new_config_text =
+        cc_switch_lib::codex_config_text_from_settings(&new_provider.settings_config)
+            .expect("new provider settings should render to config.toml");
     assert!(
         new_config_text.contains("model = "),
         "provider config snapshot should contain model snippet"
@@ -365,11 +363,9 @@ requires_openai_auth = true
         .providers
         .get("stored-current")
         .expect("stored current provider remains");
-    let stored_text = stored_current
-        .settings_config
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
+    let stored_text =
+        cc_switch_lib::codex_config_text_from_settings(&stored_current.settings_config)
+            .expect("stored current settings should render to config.toml");
     assert!(
         stored_text.contains("https://cx.example/v1"),
         "stale stored current must not receive the live provider snapshot"
@@ -388,11 +384,8 @@ requires_openai_auth = true
         Some("live-fuli-key"),
         "actual live current should be backfilled with live auth before switching"
     );
-    let live_text = live_current
-        .settings_config
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
+    let live_text = cc_switch_lib::codex_config_text_from_settings(&live_current.settings_config)
+        .expect("live current settings should render to config.toml");
     assert!(
         live_text.contains("https://fuli.example/v1"),
         "actual live current should be backfilled with live config before switching"
@@ -652,24 +645,26 @@ requires_openai_auth = true
     );
 
     let guard = state.config.read().expect("read config after switch");
-    let new_config_text = guard
+    let new_settings = guard
         .get_manager(&AppType::Codex)
         .and_then(|manager| manager.providers.get("new-provider"))
-        .and_then(|provider| provider.settings_config.get("config"))
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+        .map(|provider| &provider.settings_config)
+        .expect("new provider settings");
+    let new_config_text = cc_switch_lib::codex_config_text_from_settings(new_settings)
+        .expect("new provider settings should render to config.toml");
     assert!(
         new_config_text.contains("[model_providers.aihubmix]"),
         "stored provider template should remain provider-specific after refresh"
     );
-    let old_config_text = guard
+    let old_settings = guard
         .get_manager(&AppType::Codex)
         .and_then(|manager| manager.providers.get("old-provider"))
-        .and_then(|provider| provider.settings_config.get("config"))
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+        .map(|provider| &provider.settings_config)
+        .expect("old provider settings");
+    let old_config_text = cc_switch_lib::codex_config_text_from_settings(old_settings)
+        .expect("old provider settings should render to config.toml");
     let old_parsed: toml::Value =
-        toml::from_str(old_config_text).expect("parse old provider config after repair");
+        toml::from_str(&old_config_text).expect("parse old provider config after repair");
     assert_eq!(
         old_parsed.get("model_provider").and_then(|v| v.as_str()),
         Some("rightcode"),
@@ -769,13 +764,14 @@ requires_openai_auth = true
         .expect("switch to provider c should succeed");
 
     let guard = state.config.read().expect("read config after switches");
-    let provider_b_config = guard
+    let provider_b_settings = guard
         .get_manager(&AppType::Codex)
         .and_then(|manager| manager.providers.get("provider-b"))
-        .and_then(|provider| provider.settings_config.get("config"))
-        .and_then(|v| v.as_str())
-        .expect("provider b config");
-    let parsed: toml::Value = toml::from_str(provider_b_config).expect("parse provider b config");
+        .map(|provider| &provider.settings_config)
+        .expect("provider b settings");
+    let provider_b_config = cc_switch_lib::codex_config_text_from_settings(provider_b_settings)
+        .expect("provider b settings should render to config.toml");
+    let parsed: toml::Value = toml::from_str(&provider_b_config).expect("parse provider b config");
 
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),

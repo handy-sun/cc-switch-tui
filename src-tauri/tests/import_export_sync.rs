@@ -139,12 +139,11 @@ fn sync_codex_provider_writes_auth_and_config() {
     // 当前供应商应同步最新 config 文本
     let manager = config.get_manager(&AppType::Codex).expect("codex manager");
     let synced = manager.providers.get("codex-1").expect("codex provider");
-    let synced_cfg = synced
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .expect("config string");
-    assert_eq!(synced_cfg, toml_text);
+    let synced_cfg = cc_switch_lib::codex_config_text_from_settings(&synced.settings_config)
+        .expect("synced config should render to config.toml");
+    let synced_toml: toml::Value = toml::from_str(&synced_cfg).expect("parse synced config");
+    let live_toml: toml::Value = toml::from_str(&toml_text).expect("parse live config");
+    assert_eq!(synced_toml, live_toml);
 }
 
 #[test]
@@ -222,12 +221,13 @@ requires_openai_auth = true
         Some("https://aihubmix.example/v1")
     );
 
-    let synced_cfg = config
+    let synced_settings = config
         .get_manager(&AppType::Codex)
         .and_then(|manager| manager.providers.get("codex-1"))
-        .and_then(|provider| provider.settings_config.get("config"))
-        .and_then(|v| v.as_str())
-        .expect("synced config string");
+        .map(|provider| &provider.settings_config)
+        .expect("synced config settings");
+    let synced_cfg = cc_switch_lib::codex_config_text_from_settings(synced_settings)
+        .expect("synced config should render to config.toml");
     assert!(
         synced_cfg.contains("[model_providers.aihubmix]"),
         "ConfigService keeps syncing provider config from live"

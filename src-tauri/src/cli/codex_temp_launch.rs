@@ -149,18 +149,17 @@ where
         )
     })?;
 
-    let config_text = match settings.get("config") {
-        Some(Value::String(text)) => text.as_str(),
-        Some(Value::Null) | None => "",
-        Some(_) => {
-            return Err(AppError::localized(
-                "codex.temp_launch_config_invalid_type",
-                format!("供应商 {} 的 config 必须是字符串。", provider.id),
-                format!("Provider {} config must be a string.", provider.id),
-            ))
-        }
-    };
-    validate_config_toml(config_text)?;
+    let config_text = crate::codex_config::codex_config_text_from_settings(
+        &provider.settings_config,
+    )
+    .map_err(|err| {
+        AppError::localized(
+            "codex.temp_launch_config_invalid_type",
+            format!("供应商 {} 的 Codex 配置无效：{err}", provider.id),
+            format!("Provider {} Codex config is invalid: {err}", provider.id),
+        )
+    })?;
+    validate_config_toml(&config_text)?;
 
     let auth = match settings.get("auth") {
         Some(Value::Object(auth)) if !auth.is_empty() => Some(Value::Object(auth.clone())),

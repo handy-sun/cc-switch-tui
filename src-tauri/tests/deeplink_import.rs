@@ -92,11 +92,8 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
         .settings_config
         .pointer("/auth/OPENAI_API_KEY")
         .and_then(|v| v.as_str());
-    let config_text = provider
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+    let config_text = cc_switch_lib::codex_config_text_from_settings(&provider.settings_config)
+        .expect("Codex settings should render to config.toml");
     assert_eq!(auth_value, request.api_key.as_deref());
     assert!(
         request

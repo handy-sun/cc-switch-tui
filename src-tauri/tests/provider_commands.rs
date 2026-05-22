@@ -303,11 +303,9 @@ command = "echo"
         .providers
         .get("new-provider")
         .expect("new provider exists");
-    let new_config_text = new_provider
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+    let new_config_text =
+        cc_switch_lib::codex_config_text_from_settings(&new_provider.settings_config)
+            .expect("new provider settings should render to config.toml");
     assert!(
         new_config_text.contains("model = "),
         "provider config snapshot should contain model snippet"

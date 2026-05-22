@@ -144,10 +144,9 @@ fn build_codex_official_settings_config(current: Option<&Value>) -> Result<Value
         .map(|value| Value::Object(value.clone()))
         .unwrap_or_else(|| json!({}));
     let config = current
-        .and_then(|value| value.get("config"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let cleaned_config = crate::codex_config::strip_codex_provider_config_text(config)?;
+        .and_then(|value| crate::codex_config::codex_config_text_from_settings(value).ok())
+        .unwrap_or_default();
+    let cleaned_config = crate::codex_config::strip_codex_provider_config_text(&config)?;
 
     Ok(json!({
         "auth": auth,
@@ -283,11 +282,10 @@ pub fn prompt_settings_config(
                 .and_then(|v| v.as_object())
                 .map(|obj| !obj.is_empty())
                 .unwrap_or(false);
-            let current_config_str = current
-                .and_then(|v| v.get("config"))
-                .and_then(|c| c.as_str());
+            let current_config_str =
+                current.and_then(|v| crate::codex_config::codex_config_text_from_settings(v).ok());
             let mut current_base_url: Option<String> = None;
-            if let Some(cfg) = current_config_str {
+            if let Some(cfg) = current_config_str.as_deref() {
                 if let Ok(table) = toml::from_str::<toml::Table>(cfg) {
                     current_base_url = table
                         .get("base_url")
@@ -496,13 +494,12 @@ fn prompt_codex_config(current: Option<&Value>) -> Result<Value, AppError> {
         .and_then(|k| k.as_str())
         .filter(|s| !s.is_empty());
 
-    let current_config_str = current
-        .and_then(|v| v.get("config"))
-        .and_then(|c| c.as_str());
+    let current_config_str =
+        current.and_then(|v| crate::codex_config::codex_config_text_from_settings(v).ok());
 
     let mut current_base_url: Option<String> = None;
     let mut current_model: Option<String> = None;
-    if let Some(cfg) = current_config_str {
+    if let Some(cfg) = current_config_str.as_deref() {
         if let Ok(table) = toml::from_str::<toml::Table>(cfg) {
             current_base_url = table
                 .get("base_url")
@@ -782,10 +779,8 @@ pub fn display_provider_summary(provider: &Provider, app_type: &AppType) {
                     );
                 }
             }
-            if let Some(config) = provider
-                .settings_config
-                .get("config")
-                .and_then(|v| v.as_str())
+            if let Ok(config) =
+                crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
             {
                 println!("  {}", texts::config_toml_lines(config.lines().count()));
             }

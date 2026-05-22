@@ -424,12 +424,13 @@ impl App {
             }
             form::CodexPreviewSection::Config => {
                 let provider_json = provider.to_provider_json_value();
-                let config_text = provider_json
+                let settings_value = provider_json
                     .get("settingsConfig")
-                    .and_then(|value| value.get("config"))
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+                let config_text =
+                    crate::codex_config::codex_config_text_from_settings(&settings_value)
+                        .unwrap_or_default();
                 self.open_editor(
                     texts::tui_codex_config_toml_title(),
                     EditorKind::Plain,

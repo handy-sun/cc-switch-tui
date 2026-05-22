@@ -516,8 +516,8 @@ fn merge_codex_config(
         }
     }
 
-    if let Some(config_str) = config.get("config").and_then(|v| v.as_str()) {
-        if let Ok(toml_value) = toml::from_str::<toml::Value>(config_str) {
+    if let Ok(config_str) = crate::codex_config::codex_config_text_from_settings(config) {
+        if let Ok(toml_value) = toml::from_str::<toml::Value>(&config_str) {
             if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
                 if let Some(base_url) = extract_codex_base_url(&toml_value) {
                     request.endpoint = Some(base_url);

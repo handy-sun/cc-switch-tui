@@ -212,10 +212,8 @@ pub(crate) fn render_provider_add_form(
         let auth_text =
             serde_json::to_string_pretty(&auth_value).unwrap_or_else(|_| "{}".to_string());
 
-        let config_text = settings_value
-            .get("config")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
+        let config_text = crate::codex_config::codex_config_text_from_settings(&settings_value)
+            .unwrap_or_default();
 
         let preview = Layout::default()
             .direction(Direction::Vertical)
@@ -240,7 +238,7 @@ pub(crate) fn render_provider_add_form(
         render_form_text_preview(
             frame,
             texts::tui_codex_config_toml_title(),
-            config_text,
+            &config_text,
             provider.codex_config_scroll,
             config_active,
             preview[1],

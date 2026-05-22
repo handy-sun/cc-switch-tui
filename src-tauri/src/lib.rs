@@ -37,7 +37,10 @@ pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 pub use claude_plugin::{
     sync_claude_plugin_on_provider_switch, sync_claude_plugin_on_settings_toggle,
 };
-pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use codex_config::{
+    codex_config_text_from_settings, get_codex_auth_path, get_codex_config_path,
+    write_codex_live_atomic,
+};
 pub use config::{
     check_legacy_config_dir_migration_needed, get_app_config_dir, get_claude_mcp_path,
     get_claude_settings_path, legacy_config_migration_paths, migrate_legacy_config_dir_if_needed,

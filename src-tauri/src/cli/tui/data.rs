@@ -591,14 +591,14 @@ fn is_gemini_official_provider(row: &ProviderRow) -> bool {
 }
 
 fn codex_config_has_base_url(settings_config: &Value) -> bool {
-    let Some(config_text) = settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    let Ok(config_text) = crate::codex_config::codex_config_text_from_settings(settings_config)
     else {
         return false;
     };
+    let config_text = config_text.trim();
+    if config_text.is_empty() {
+        return false;
+    }
 
     let Ok(table) = toml::from_str::<toml::Table>(config_text) else {
         return false;
@@ -741,15 +741,15 @@ fn extract_api_url(settings_config: &Value, app_type: &AppType) -> Option<String
             .as_str()
             .map(|s| s.to_string()),
         AppType::Codex => {
-            if let Some(config_str) = settings_config.get("config")?.as_str() {
-                for line in config_str.lines() {
-                    let line = line.trim();
-                    if line.starts_with("base_url") {
-                        if let Some(url_part) = line.split('=').nth(1) {
-                            let url = url_part.trim().trim_matches('"').trim_matches('\'');
-                            if !url.is_empty() {
-                                return Some(url.to_string());
-                            }
+            let config_str =
+                crate::codex_config::codex_config_text_from_settings(settings_config).ok()?;
+            for line in config_str.lines() {
+                let line = line.trim();
+                if line.starts_with("base_url") {
+                    if let Some(url_part) = line.split('=').nth(1) {
+                        let url = url_part.trim().trim_matches('"').trim_matches('\'');
+                        if !url.is_empty() {
+                            return Some(url.to_string());
                         }
                     }
                 }

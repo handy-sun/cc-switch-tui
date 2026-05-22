@@ -640,11 +640,11 @@ wire_api = "responses"
             provider.settings_config["auth"]["OPENAI_API_KEY"],
             json!("live-codex-key")
         );
-        assert!(provider
-            .settings_config
-            .get("config")
-            .and_then(|value| value.as_str())
-            .is_some_and(|text| text.contains("model_provider = \"legacy\"")));
+        assert!(
+            crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
+                .expect("Codex settings should render to config.toml")
+                .contains("model_provider = \"legacy\"")
+        );
         assert!(state
             .db
             .get_provider_by_id("codex-official", "codex")

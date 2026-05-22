@@ -92,14 +92,15 @@ impl ProviderAddFormState {
             }
             AppType::Codex => {
                 if self.is_codex_official_provider() {
-                    let existing_config = settings_obj
-                        .get("config")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("");
+                    let existing_config = crate::codex_config::codex_config_text_from_settings(
+                        &Value::Object(settings_obj.clone()),
+                    )
+                    .unwrap_or_default();
                     let cleaned_config =
-                        crate::codex_config::strip_codex_provider_config_text(existing_config)
+                        crate::codex_config::strip_codex_provider_config_text(&existing_config)
                             .map_err(|_| ())
                             .unwrap_or_else(|_| existing_config.trim().to_string());
+                    settings_obj.remove(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY);
                     settings_obj.insert("config".to_string(), Value::String(cleaned_config));
 
                     let auth_value = settings_obj
@@ -118,10 +119,10 @@ impl ProviderAddFormState {
                         self.codex_model.value.trim()
                     };
 
-                    let existing_config = settings_obj
-                        .get("config")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("");
+                    let existing_config = crate::codex_config::codex_config_text_from_settings(
+                        &Value::Object(settings_obj.clone()),
+                    )
+                    .unwrap_or_default();
                     let base_config = if existing_config.trim().is_empty() {
                         build_codex_provider_config_toml(
                             &provider_key,
@@ -140,6 +141,7 @@ impl ProviderAddFormState {
                         self.codex_requires_openai_auth,
                         self.codex_env_key.value.trim(),
                     );
+                    settings_obj.remove(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY);
                     settings_obj.insert("config".to_string(), Value::String(config_toml));
 
                     let api_key = self.codex_api_key.value.trim();

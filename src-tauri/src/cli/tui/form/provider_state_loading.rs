@@ -86,12 +86,10 @@ fn populate_claude_form(form: &mut ProviderAddFormState, provider: &Provider) {
 }
 
 fn populate_codex_form(form: &mut ProviderAddFormState, provider: &Provider) {
-    if let Some(config) = provider
-        .settings_config
-        .get("config")
-        .and_then(|value| value.as_str())
+    if let Ok(config) =
+        crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
     {
-        let parsed = parse_codex_config_snippet(config);
+        let parsed = parse_codex_config_snippet(&config);
         if let Some(base_url) = parsed.base_url {
             form.codex_base_url.set(base_url);
         }

@@ -861,7 +861,35 @@ impl ProviderService {
             app_type,
             provider,
             common_config_snippet,
-        )
+        )?;
+
+        if matches!(app_type, AppType::Codex) {
+            crate::codex_config::normalize_codex_settings_config_for_storage(
+                &mut provider.settings_config,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn migrate_provider_for_storage(
+        app_type: &AppType,
+        provider: &mut Provider,
+        common_config_snippet: Option<&str>,
+    ) -> Result<(), AppError> {
+        common_config::migrate_provider_subset_usage_for_storage(
+            app_type,
+            provider,
+            common_config_snippet,
+        )?;
+
+        if matches!(app_type, AppType::Codex) {
+            crate::codex_config::normalize_codex_settings_config_for_storage(
+                &mut provider.settings_config,
+            )?;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn normalize_settings_config_for_storage(
@@ -919,11 +947,7 @@ impl ProviderService {
         };
 
         for provider in manager.providers.values_mut() {
-            common_config::migrate_provider_subset_usage_for_storage(
-                app_type,
-                provider,
-                common_config_snippet,
-            )?;
+            Self::migrate_provider_for_storage(app_type, provider, common_config_snippet)?;
         }
 
         Ok(())
@@ -939,11 +963,9 @@ impl ProviderService {
         };
 
         for (provider_id, provider) in manager.providers.iter_mut() {
-            if let Err(err) = common_config::migrate_provider_subset_usage_for_storage(
-                app_type,
-                provider,
-                common_config_snippet,
-            ) {
+            if let Err(err) =
+                Self::migrate_provider_for_storage(app_type, provider, common_config_snippet)
+            {
                 log::warn!(
                     "skip normalizing {app_type} provider snapshot '{provider_id}' while applying auto-extracted common config: {err}"
                 );
@@ -977,11 +999,7 @@ impl ProviderService {
         };
 
         if let Some(current_provider) = manager.providers.get_mut(&current_provider_id) {
-            common_config::migrate_provider_subset_usage_for_storage(
-                app_type,
-                current_provider,
-                common_config_snippet,
-            )?;
+            Self::migrate_provider_for_storage(app_type, current_provider, common_config_snippet)?;
         }
 
         for (provider_id, provider) in manager.providers.iter_mut() {
@@ -989,11 +1007,9 @@ impl ProviderService {
                 continue;
             }
 
-            if let Err(err) = common_config::migrate_provider_subset_usage_for_storage(
-                app_type,
-                provider,
-                common_config_snippet,
-            ) {
+            if let Err(err) =
+                Self::migrate_provider_for_storage(app_type, provider, common_config_snippet)
+            {
                 log::warn!(
                     "skip normalizing {app_type} non-current provider snapshot '{provider_id}' while updating common config snippet: {err}"
                 );
@@ -1484,6 +1500,15 @@ impl ProviderService {
             None,
         );
         provider.category = Some("custom".to_string());
+        let common_config_snippet = {
+            let guard = state.config.read().map_err(AppError::from)?;
+            guard.common_config_snippets.get(&app_type).cloned()
+        };
+        Self::normalize_provider_for_storage(
+            &app_type,
+            &mut provider,
+            common_config_snippet.as_deref(),
+        )?;
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         state
@@ -2148,17 +2173,17 @@ impl ProviderService {
                     .as_object()
                     .ok_or_else(|| AppError::Config("Codex 配置必须是 JSON 对象".into()))?;
                 let auth = settings.get("auth").cloned();
-                let cfg_text = settings.get("config").and_then(Value::as_str).unwrap_or("");
+                let cfg_text = crate::codex_config::codex_config_text_from_settings(&effective)?;
 
                 if !cfg_text.trim().is_empty() {
-                    crate::codex_config::validate_config_toml(cfg_text)?;
+                    crate::codex_config::validate_config_toml(&cfg_text)?;
                 }
 
                 let mut backup = serde_json::Map::new();
                 if let Some(auth) = auth {
                     backup.insert("auth".to_string(), auth);
                 }
-                backup.insert("config".to_string(), Value::String(cfg_text.to_string()));
+                backup.insert("config".to_string(), Value::String(cfg_text));
                 Ok(Value::Object(backup))
             }
             AppType::Gemini => {
@@ -2291,13 +2316,24 @@ impl ProviderService {
                         crate::codex_config::validate_config_toml(cfg_text)?;
                     }
                 }
+                if let Some(codex_value) = settings.get("codex") {
+                    if !(codex_value.is_object() || codex_value.is_null()) {
+                        return Err(AppError::localized(
+                            "provider.codex.config.invalid_type",
+                            "Codex codex 字段必须是对象",
+                            "Codex codex field must be an object",
+                        ));
+                    }
+                    let cfg_text =
+                        crate::codex_config::codex_structured_config_to_toml(codex_value)?;
+                    crate::codex_config::validate_config_toml(&cfg_text)?;
+                }
 
                 if !Self::is_codex_official_provider(provider) {
-                    let config_text = settings
-                        .get("config")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    if !Self::codex_config_has_base_url(config_text) {
+                    let config_text = crate::codex_config::codex_config_text_from_settings(
+                        &provider.settings_config,
+                    )?;
+                    if !Self::codex_config_has_base_url(&config_text) {
                         return Err(AppError::localized(
                             "provider.codex.base_url.missing",
                             format!("供应商 {} 缺少有效的 Codex Base URL", provider.id),

@@ -1495,14 +1495,11 @@ mod tests {
 
         assert_eq!(data.providers.current_id, "default");
         assert!(data.providers.rows.iter().any(|row| {
+            let config_text =
+                crate::codex_config::codex_config_text_from_settings(&row.provider.settings_config)
+                    .unwrap_or_default();
             row.id == "default"
-                && row
-                    .provider
-                    .settings_config
-                    .get("config")
-                    .and_then(|value| value.as_str())
-                    .map(|value| value.contains("model_provider = \"legacy\""))
-                    .unwrap_or(false)
+                && config_text.contains("model_provider = \"legacy\"")
                 && row.provider.settings_config.get("auth").is_some()
         }));
     }

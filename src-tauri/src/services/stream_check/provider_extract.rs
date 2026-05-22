@@ -127,14 +127,9 @@ impl StreamCheckService {
                     return Ok(url.trim_end_matches('/').to_string());
                 }
 
-                let config = provider.settings_config.get("config");
-                if let Some(url) = config
-                    .and_then(|value| value.get("base_url"))
-                    .and_then(|v| v.as_str())
+                if let Ok(config_text) =
+                    crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
                 {
-                    return Ok(url.trim_end_matches('/').to_string());
-                }
-                if let Some(config_text) = config.and_then(|value| value.as_str()) {
                     if let Some(start) = config_text.find("base_url = \"") {
                         let rest = &config_text[start + 12..];
                         if let Some(end) = rest.find('"') {
@@ -338,7 +333,8 @@ impl StreamCheckService {
 
         provider
             .settings_config
-            .get("config")
+            .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+            .or_else(|| provider.settings_config.get("config"))
             .and_then(|value| value.get("api_key").or_else(|| value.get("apiKey")))
             .and_then(|value| value.as_str())
             .map(|value| value.to_string())

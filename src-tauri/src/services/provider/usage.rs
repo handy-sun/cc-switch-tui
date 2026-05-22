@@ -318,11 +318,9 @@ impl ProviderService {
                 })
                 .map(|s| s.to_string()),
             AppType::Codex => {
-                let config_toml = provider
-                    .settings_config
-                    .get("config")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let config_toml = crate::codex_config::codex_config_text_from_settings(
+                    &provider.settings_config,
+                )?;
 
                 if !config_toml.contains("base_url") {
                     return Err(AppError::localized(
@@ -340,7 +338,7 @@ impl ProviderService {
                     )
                 })?;
 
-                re.captures(config_toml)
+                re.captures(&config_toml)
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
                     .ok_or_else(|| {
