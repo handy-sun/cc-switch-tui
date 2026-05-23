@@ -44,12 +44,7 @@ impl ProviderService {
         let cfg_text = if config_path.exists() {
             fs::read_to_string(&config_path).map_err(|err| AppError::io(&config_path, err))?
         } else {
-            provider
-                .settings_config
-                .get("config")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string()
+            crate::codex_config::codex_config_text_from_settings(&provider.settings_config)?
         };
         crate::codex_config::validate_config_toml(&cfg_text)?;
         let cfg_text_for_storage =
@@ -62,14 +57,15 @@ impl ProviderService {
             Value::Object(serde_json::Map::new())
         };
 
-        let mut raw_settings = serde_json::Map::new();
-        raw_settings.insert("auth".to_string(), auth);
-        raw_settings.insert("config".to_string(), Value::String(cfg_text_for_storage));
+        let raw_settings = crate::codex_config::codex_settings_snapshot_from_toml(
+            Some(auth),
+            &cfg_text_for_storage,
+        )?;
 
         let mut settings_to_store = Self::normalize_settings_config_for_storage(
             &AppType::Codex,
             &provider,
-            Value::Object(raw_settings),
+            raw_settings,
             common_snippet.as_deref(),
         )?;
         Self::restore_codex_model_provider_for_storage_best_effort(
@@ -217,11 +213,9 @@ impl ProviderService {
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .or_else(|| {
-                provider
-                    .settings_config
-                    .get("config")
-                    .and_then(Value::as_str)
-                    .and_then(Self::codex_provider_key_from_config_text)
+                crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
+                    .ok()
+                    .and_then(|config| Self::codex_provider_key_from_config_text(&config))
             })
     }
 
@@ -292,11 +286,8 @@ impl ProviderService {
         let current_key = Self::provider_codex_model_provider_key(provider);
         let mut changed = current_key.as_deref() != Some(target_key.as_str());
 
-        if let Some(config_text) = provider
-            .settings_config
-            .get("config")
-            .and_then(Value::as_str)
-            .map(str::to_string)
+        if let Ok(config_text) =
+            crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
         {
             let rewritten = crate::codex_config::rewrite_codex_config_model_provider_key(
                 &config_text,
@@ -304,9 +295,19 @@ impl ProviderService {
             )?;
             if rewritten != config_text {
                 changed = true;
-                if let Some(settings_obj) = provider.settings_config.as_object_mut() {
-                    settings_obj.insert("config".to_string(), Value::String(rewritten));
-                }
+                let prefer_structured = provider
+                    .settings_config
+                    .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+                    .is_some()
+                    && provider
+                        .settings_config
+                        .get(crate::codex_config::CODEX_LEGACY_CONFIG_KEY)
+                        .is_none();
+                crate::codex_config::set_codex_config_text_in_settings(
+                    &mut provider.settings_config,
+                    &rewritten,
+                    prefer_structured,
+                )?;
             }
         }
 
@@ -482,13 +483,8 @@ impl ProviderService {
     fn codex_catalog_entry_from_provider(
         provider: &Provider,
     ) -> Result<Option<(String, toml_edit::Item)>, AppError> {
-        let Some(config_toml) = provider
-            .settings_config
-            .get("config")
-            .and_then(Value::as_str)
-        else {
-            return Ok(None);
-        };
+        let config_toml =
+            crate::codex_config::codex_config_text_from_settings(&provider.settings_config)?;
         if config_toml.trim().is_empty() {
             return Ok(None);
         }
@@ -512,7 +508,7 @@ impl ProviderService {
                     .is_some()
             })
             .map(str::to_string)
-            .or_else(|| Self::codex_provider_key_from_config_text(config_toml))
+            .or_else(|| Self::codex_provider_key_from_config_text(&config_toml))
             .or_else(|| {
                 model_providers.and_then(|providers| {
                     let mut keys = providers.iter().map(|(key, _)| key.to_string());
@@ -725,12 +721,16 @@ impl ProviderService {
             } else {
                 Value::Object(serde_json::Map::new())
             };
+            let snapshot_config =
+                Self::build_codex_catalog_snapshot_config(key, item, model.as_deref());
+            let structured_config =
+                crate::codex_config::codex_structured_config_from_toml(&snapshot_config)?;
             providers.push(LiveCodexCatalogProvider {
                 key: key.to_string(),
                 name,
                 settings_config: json!({
                     "auth": auth_value,
-                    "config": Self::build_codex_catalog_snapshot_config(key, item, model.as_deref()),
+                    "codex": structured_config,
                 }),
                 is_active,
             });
@@ -778,16 +778,17 @@ impl ProviderService {
             .and_then(|value| value.as_str())
             .map(str::to_string);
 
+        let snapshot_config =
+            Self::build_codex_catalog_snapshot_config(active_key, active_item, model.as_deref());
+        let structured_config =
+            crate::codex_config::codex_structured_config_from_toml(&snapshot_config)?;
+
         Ok(Some(LiveCodexCatalogProvider {
             key: active_key.to_string(),
             name,
             settings_config: json!({
                 "auth": auth.clone(),
-                "config": Self::build_codex_catalog_snapshot_config(
-                    active_key,
-                    active_item,
-                    model.as_deref()
-                ),
+                "codex": structured_config,
             }),
             is_active: true,
         }))
@@ -1232,15 +1233,14 @@ impl ProviderService {
             let text_for_storage =
                 Self::strip_codex_runtime_local_keys_from_snapshot_config(&text)?;
 
-            let mut raw_settings = serde_json::Map::new();
-            if let Some(auth) = auth.clone() {
-                raw_settings.insert("auth".to_string(), auth);
-            }
-            raw_settings.insert("config".to_string(), Value::String(text_for_storage));
+            let raw_settings = crate::codex_config::codex_settings_snapshot_from_toml(
+                auth.clone(),
+                &text_for_storage,
+            )?;
             Self::normalize_settings_config_for_storage(
                 &AppType::Codex,
                 &current_provider,
-                Value::Object(raw_settings),
+                raw_settings,
                 config.common_config_snippets.codex.as_deref(),
             )?
         } else {
@@ -1294,11 +1294,12 @@ impl ProviderService {
             .get("auth")
             .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
         let cfg_text = settings
-            .get("config")
-            .and_then(Value::as_str)
+            .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+            .or_else(|| settings.get(crate::codex_config::CODEX_LEGACY_CONFIG_KEY))
             .ok_or_else(|| {
-                AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
-            })?;
+                AppError::Config("Codex 供应商配置缺少 'codex' 或 'config' 字段".to_string())
+            })
+            .and_then(|_| crate::codex_config::codex_config_text_from_settings(&effective))?;
 
         let auth_to_write = if Self::is_codex_official_provider(provider)
             && auth.as_object().is_some_and(|auth| auth.is_empty())
@@ -1317,7 +1318,7 @@ impl ProviderService {
         };
         let merged = crate::codex_config::merge_provider_into_codex_live_config(
             &live_text,
-            cfg_text,
+            &cfg_text,
             preserve_live_preferences,
         )?;
 

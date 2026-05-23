@@ -5,12 +5,15 @@ use crate::config::{
     atomic_write, delete_file, home_dir, sanitize_provider_name, write_json_file, write_text_file,
 };
 use crate::error::AppError;
+use serde_json::json;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
 use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
+pub const CODEX_STRUCTURED_CONFIG_KEY: &str = "codex";
+pub const CODEX_LEGACY_CONFIG_KEY: &str = "config";
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
 /// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
@@ -177,6 +180,194 @@ pub fn validate_config_toml(text: &str) -> Result<(), AppError> {
     toml::from_str::<toml::Table>(text)
         .map(|_| ())
         .map_err(|e| AppError::toml(Path::new("config.toml"), e))
+}
+
+fn toml_value_to_json(value: toml::Value) -> Value {
+    match value {
+        toml::Value::String(value) => Value::String(value),
+        toml::Value::Integer(value) => json!(value),
+        toml::Value::Float(value) => json!(value),
+        toml::Value::Boolean(value) => Value::Bool(value),
+        toml::Value::Datetime(value) => Value::String(value.to_string()),
+        toml::Value::Array(values) => {
+            Value::Array(values.into_iter().map(toml_value_to_json).collect())
+        }
+        toml::Value::Table(table) => {
+            let mut obj = serde_json::Map::new();
+            for (key, value) in table {
+                obj.insert(key, toml_value_to_json(value));
+            }
+            Value::Object(obj)
+        }
+    }
+}
+
+fn json_value_to_toml(value: &Value, path: &str) -> Result<toml::Value, AppError> {
+    match value {
+        Value::Null => Err(AppError::Config(format!(
+            "Codex structured config contains null at `{path}`; TOML has no null value"
+        ))),
+        Value::Bool(value) => Ok(toml::Value::Boolean(*value)),
+        Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                Ok(toml::Value::Integer(value))
+            } else if let Some(value) = value.as_u64() {
+                let value = i64::try_from(value).map_err(|_| {
+                    AppError::Config(format!(
+                        "Codex structured config integer at `{path}` is too large for TOML"
+                    ))
+                })?;
+                Ok(toml::Value::Integer(value))
+            } else if let Some(value) = value.as_f64() {
+                Ok(toml::Value::Float(value))
+            } else {
+                Err(AppError::Config(format!(
+                    "Codex structured config number at `{path}` is not representable as TOML"
+                )))
+            }
+        }
+        Value::String(value) => Ok(toml::Value::String(value.clone())),
+        Value::Array(values) => {
+            let mut out = Vec::with_capacity(values.len());
+            for (index, value) in values.iter().enumerate() {
+                out.push(json_value_to_toml(value, &format!("{path}[{index}]"))?);
+            }
+            Ok(toml::Value::Array(out))
+        }
+        Value::Object(values) => {
+            let mut out = toml::map::Map::new();
+            for (key, value) in values {
+                let child_path = if path.is_empty() {
+                    key.to_string()
+                } else {
+                    format!("{path}.{key}")
+                };
+                out.insert(key.clone(), json_value_to_toml(value, &child_path)?);
+            }
+            Ok(toml::Value::Table(out))
+        }
+    }
+}
+
+pub fn codex_structured_config_from_toml(config_toml: &str) -> Result<Value, AppError> {
+    let trimmed = config_toml.trim();
+    if trimmed.is_empty() {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+
+    trimmed
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Config(format!("TOML parse error: {e}")))?;
+    let value = toml::from_str::<toml::Value>(trimmed)
+        .map_err(|e| AppError::toml(Path::new("config.toml"), e))?;
+    match toml_value_to_json(value) {
+        Value::Object(obj) => Ok(Value::Object(obj)),
+        _ => Err(AppError::Config(
+            "Codex config.toml root must be a TOML table".to_string(),
+        )),
+    }
+}
+
+pub fn codex_structured_config_to_toml(config: &Value) -> Result<String, AppError> {
+    match config {
+        Value::Null => Ok(String::new()),
+        Value::Object(_) => {
+            let value = json_value_to_toml(config, CODEX_STRUCTURED_CONFIG_KEY)?;
+            toml::to_string(&value)
+                .map_err(|source| {
+                    AppError::Config(format!(
+                        "Codex structured config TOML serialize error: {source}"
+                    ))
+                })
+                .map(|text| text.trim().to_string())
+        }
+        _ => Err(AppError::Config(
+            "Codex structured config must be a JSON object".to_string(),
+        )),
+    }
+}
+
+pub fn codex_config_text_from_settings(settings: &Value) -> Result<String, AppError> {
+    let settings = settings
+        .as_object()
+        .ok_or_else(|| AppError::Config("Codex 配置必须是 JSON 对象".into()))?;
+
+    if let Some(config) = settings.get(CODEX_STRUCTURED_CONFIG_KEY) {
+        return codex_structured_config_to_toml(config);
+    }
+
+    match settings.get(CODEX_LEGACY_CONFIG_KEY) {
+        Some(Value::String(text)) => Ok(text.clone()),
+        Some(Value::Null) | None => Ok(String::new()),
+        Some(_) => Err(AppError::Config(
+            "Codex config 字段必须是字符串，codex 字段必须是对象".to_string(),
+        )),
+    }
+}
+
+pub fn codex_settings_snapshot_from_toml(
+    auth: Option<Value>,
+    config_toml: &str,
+) -> Result<Value, AppError> {
+    let mut settings = serde_json::Map::new();
+    if let Some(auth) = auth {
+        settings.insert("auth".to_string(), auth);
+    }
+    settings.insert(
+        CODEX_STRUCTURED_CONFIG_KEY.to_string(),
+        codex_structured_config_from_toml(config_toml)?,
+    );
+    Ok(Value::Object(settings))
+}
+
+pub fn set_codex_config_text_in_settings(
+    settings: &mut Value,
+    config_toml: &str,
+    prefer_structured: bool,
+) -> Result<(), AppError> {
+    let settings = settings
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config("Codex 配置必须是 JSON 对象".into()))?;
+
+    if prefer_structured {
+        settings.remove(CODEX_LEGACY_CONFIG_KEY);
+        settings.insert(
+            CODEX_STRUCTURED_CONFIG_KEY.to_string(),
+            codex_structured_config_from_toml(config_toml)?,
+        );
+    } else {
+        settings.insert(
+            CODEX_LEGACY_CONFIG_KEY.to_string(),
+            Value::String(config_toml.to_string()),
+        );
+    }
+
+    Ok(())
+}
+
+pub fn normalize_codex_settings_config_for_storage(settings: &mut Value) -> Result<(), AppError> {
+    let config_toml = codex_config_text_from_settings(settings)?;
+    if !config_toml.trim().is_empty()
+        && !config_toml.lines().any(|line| {
+            let line = line.trim();
+            !line.is_empty()
+                && !line.starts_with('#')
+                && (line.contains('=') || line.starts_with('['))
+        })
+    {
+        return Err(AppError::Config(
+            "Codex config.toml does not contain TOML assignments or tables".to_string(),
+        ));
+    }
+    let settings = settings
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config("Codex 配置必须是 JSON 对象".into()))?;
+    settings.remove(CODEX_LEGACY_CONFIG_KEY);
+    settings.insert(
+        CODEX_STRUCTURED_CONFIG_KEY.to_string(),
+        codex_structured_config_from_toml(&config_toml)?,
+    );
+    Ok(())
 }
 
 /// Remove provider-specific Codex TOML keys and keep only shared/global settings.
@@ -389,13 +580,12 @@ pub fn normalize_codex_settings_config_model_provider(
     settings: &mut Value,
     anchor_config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let Some(config_text) = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-    else {
+    let prefer_structured = settings.get(CODEX_STRUCTURED_CONFIG_KEY).is_some()
+        && settings.get(CODEX_LEGACY_CONFIG_KEY).is_none();
+    let config_text = codex_config_text_from_settings(settings)?;
+    if config_text.trim().is_empty() {
         return Ok(());
-    };
+    }
 
     let current_config_text = read_codex_config_text().ok();
     let anchors = anchor_config_text
@@ -404,10 +594,7 @@ pub fn normalize_codex_settings_config_model_provider(
     let normalized =
         normalize_codex_live_config_model_provider_with_anchors(&config_text, anchors)?;
 
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("config".to_string(), Value::String(normalized));
-    }
-
+    set_codex_config_text_in_settings(settings, &normalized, prefer_structured)?;
     Ok(())
 }
 
@@ -460,24 +647,16 @@ pub fn restore_codex_settings_config_model_provider_for_backfill(
     settings: &mut Value,
     template_settings: &Value,
 ) -> Result<(), AppError> {
-    let Some(config_text) = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-    else {
+    let prefer_structured = settings.get(CODEX_STRUCTURED_CONFIG_KEY).is_some()
+        && settings.get(CODEX_LEGACY_CONFIG_KEY).is_none();
+    let config_text = codex_config_text_from_settings(settings)?;
+    let template_config_text = codex_config_text_from_settings(template_settings)?;
+    if template_config_text.trim().is_empty() {
         return Ok(());
-    };
-    let Some(template_config_text) = template_settings
-        .get("config")
-        .and_then(|value| value.as_str())
-    else {
-        return Ok(());
-    };
-
-    let restored = restore_codex_backfill_model_provider_id(&config_text, template_config_text)?;
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("config".to_string(), Value::String(restored));
     }
+
+    let restored = restore_codex_backfill_model_provider_id(&config_text, &template_config_text)?;
+    set_codex_config_text_in_settings(settings, &restored, prefer_structured)?;
 
     Ok(())
 }
@@ -1374,8 +1553,8 @@ base_url = "https://aihubmix.example/v1"
         restore_codex_settings_config_model_provider_for_backfill(&mut settings, &template)
             .unwrap();
 
-        let config = settings.get("config").and_then(Value::as_str).unwrap();
-        let parsed: toml::Value = toml::from_str(config).unwrap();
+        let config = codex_config_text_from_settings(&settings).unwrap();
+        let parsed: toml::Value = toml::from_str(&config).unwrap();
         assert_eq!(
             parsed.get("model_provider").and_then(|v| v.as_str()),
             Some("aihubmix")

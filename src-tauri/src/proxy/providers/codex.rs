@@ -33,14 +33,14 @@ impl CodexAdapter {
             return Some(key.to_string());
         }
 
-        if let Some(config) = provider.settings_config.get("config") {
-            if let Some(key) = config
-                .get("api_key")
-                .or_else(|| config.get("apiKey"))
-                .and_then(|v| v.as_str())
-            {
-                return Some(key.to_string());
-            }
+        if let Some(key) = provider
+            .settings_config
+            .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+            .or_else(|| provider.settings_config.get("config"))
+            .and_then(|config| config.get("api_key").or_else(|| config.get("apiKey")))
+            .and_then(|v| v.as_str())
+        {
+            return Some(key.to_string());
         }
 
         None
@@ -71,23 +71,28 @@ impl ProviderAdapter for CodexAdapter {
             return Ok(url.trim_end_matches('/').to_string());
         }
 
-        if let Some(config) = provider.settings_config.get("config") {
-            if let Some(url) = config.get("base_url").and_then(|v| v.as_str()) {
-                return Ok(url.trim_end_matches('/').to_string());
-            }
+        if let Some(url) = provider
+            .settings_config
+            .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+            .and_then(|config| config.get("base_url"))
+            .and_then(|v| v.as_str())
+        {
+            return Ok(url.trim_end_matches('/').to_string());
+        }
 
-            if let Some(config_str) = config.as_str() {
-                if let Some(start) = config_str.find("base_url = \"") {
-                    let rest = &config_str[start + 12..];
-                    if let Some(end) = rest.find('"') {
-                        return Ok(rest[..end].trim_end_matches('/').to_string());
-                    }
+        if let Ok(config_str) =
+            crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
+        {
+            if let Some(start) = config_str.find("base_url = \"") {
+                let rest = &config_str[start + 12..];
+                if let Some(end) = rest.find('"') {
+                    return Ok(rest[..end].trim_end_matches('/').to_string());
                 }
-                if let Some(start) = config_str.find("base_url = '") {
-                    let rest = &config_str[start + 12..];
-                    if let Some(end) = rest.find('\'') {
-                        return Ok(rest[..end].trim_end_matches('/').to_string());
-                    }
+            }
+            if let Some(start) = config_str.find("base_url = '") {
+                let rest = &config_str[start + 12..];
+                if let Some(end) = rest.find('\'') {
+                    return Ok(rest[..end].trim_end_matches('/').to_string());
                 }
             }
         }

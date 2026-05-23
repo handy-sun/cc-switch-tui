@@ -427,9 +427,12 @@ fn archive_legacy_file(path: &Path, suffix: &str) -> Result<Option<PathBuf>, App
 }
 
 /// One-time migration: convert legacy flat Codex configs to the upstream
-/// `model_provider + [model_providers.<key>]` format and persist to DB.
+/// `model_provider + [model_providers.<key>]` format, then move parseable
+/// whole-file `settingsConfig.config` strings into structured
+/// `settingsConfig.codex` storage and persist to DB.
 ///
-/// After this runs, all Codex providers in memory and DB use the new format.
+/// After this runs, parseable Codex providers in memory and DB use the new
+/// structured storage shape.
 fn migrate_legacy_codex_configs(db: &Database, config: &mut MultiAppConfig) {
     use crate::app_config::AppType;
     use crate::services::provider::migrate_legacy_codex_config;
@@ -445,27 +448,46 @@ fn migrate_legacy_codex_configs(db: &Database, config: &mut MultiAppConfig) {
             .get("config")
             .and_then(|v| v.as_str())
         {
-            Some(t) => t,
+            Some(t) => t.to_string(),
             None => continue,
         };
 
-        if let Some(migrated) = migrate_legacy_codex_config(cfg_text, provider) {
-            // Update in-memory
+        let had_structured_config = provider
+            .settings_config
+            .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+            .is_some();
+
+        if had_structured_config {
             if let Some(obj) = provider.settings_config.as_object_mut() {
-                obj.insert("config".to_string(), serde_json::Value::String(migrated));
+                obj.remove(crate::codex_config::CODEX_LEGACY_CONFIG_KEY);
             }
-            // Persist to DB
-            if let Err(e) = db.update_provider_settings_config(
-                AppType::Codex.as_str(),
-                provider_id,
-                &provider.settings_config,
+        } else {
+            let config_text = migrate_legacy_codex_config(&cfg_text, provider).unwrap_or(cfg_text);
+            if let Err(e) = crate::codex_config::set_codex_config_text_in_settings(
+                &mut provider.settings_config,
+                &config_text,
+                true,
             ) {
                 log::warn!(
-                    "Failed to persist migrated Codex config for provider '{}': {}",
+                    "Failed to convert legacy Codex config storage for provider '{}': {}",
                     provider_id,
                     e
                 );
+                continue;
             }
+        }
+
+        // Persist to DB
+        if let Err(e) = db.update_provider_settings_config(
+            AppType::Codex.as_str(),
+            provider_id,
+            &provider.settings_config,
+        ) {
+            log::warn!(
+                "Failed to persist migrated Codex config for provider '{}': {}",
+                provider_id,
+                e
+            );
         }
     }
 }
@@ -640,11 +662,19 @@ wire_api = "responses"
             provider.settings_config["auth"]["OPENAI_API_KEY"],
             json!("live-codex-key")
         );
-        assert!(provider
-            .settings_config
-            .get("config")
-            .and_then(|value| value.as_str())
-            .is_some_and(|text| text.contains("model_provider = \"legacy\"")));
+        assert!(
+            provider.settings_config.get("config").is_none(),
+            "startup Codex live import should not persist legacy whole-file config strings"
+        );
+        assert!(
+            provider.settings_config.get("codex").is_some(),
+            "startup Codex live import should persist structured settingsConfig.codex"
+        );
+        assert!(
+            crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
+                .expect("Codex settings should render to config.toml")
+                .contains("model_provider = \"legacy\"")
+        );
         assert!(state
             .db
             .get_provider_by_id("codex-official", "codex")
@@ -657,6 +687,90 @@ wire_api = "responses"
         assert_eq!(manager.current, "default");
         assert!(manager.providers.contains_key("default"));
         assert!(manager.providers.contains_key("codex-official"));
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn startup_migrates_codex_legacy_config_strings_to_structured_settings() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+
+        let mut config = crate::app_config::MultiAppConfig::default();
+        {
+            let manager = config
+                .get_manager_mut(&crate::app_config::AppType::Codex)
+                .expect("codex manager");
+            manager.current = "legacy-flat".to_string();
+            manager.providers.insert(
+                "legacy-flat".to_string(),
+                crate::provider::Provider::with_id(
+                    "legacy-flat".to_string(),
+                    "Legacy Flat".to_string(),
+                    json!({
+                        "auth": { "OPENAI_API_KEY": "legacy-key" },
+                        "config": "base_url = \"https://legacy.example/v1\"\nmodel = \"gpt-5.4\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nmodel_reasoning_effort = \"high\"\n"
+                    }),
+                    None,
+                ),
+            );
+            manager.providers.insert(
+                "new-format-string".to_string(),
+                crate::provider::Provider::with_id(
+                    "new-format-string".to_string(),
+                    "New Format String".to_string(),
+                    json!({
+                        "auth": { "OPENAI_API_KEY": "new-key" },
+                        "config": "model_provider = \"new-format-string\"\nmodel = \"gpt-5.4\"\n\n[model_providers.new-format-string]\nbase_url = \"https://new.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+                    }),
+                    None,
+                ),
+            );
+        }
+
+        let db = crate::database::Database::init().expect("create db");
+        db.migrate_from_json(&config).expect("seed legacy db");
+        drop(db);
+
+        let state = AppState::try_new().expect("create startup state");
+
+        for (provider_id, expected_model_provider) in [
+            ("legacy-flat", "legacy_flat"),
+            ("new-format-string", "new-format-string"),
+        ] {
+            let provider = state
+                .db
+                .get_provider_by_id(provider_id, "codex")
+                .expect("read migrated provider")
+                .unwrap_or_else(|| panic!("{provider_id} should exist"));
+            assert!(
+                provider.settings_config.get("config").is_none(),
+                "startup migration should remove legacy whole-file config strings for {provider_id}"
+            );
+            assert!(
+                provider.settings_config.get("codex").is_some(),
+                "startup migration should store structured settingsConfig.codex for {provider_id}"
+            );
+            let config_text =
+                crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
+                    .expect("structured Codex settings should render to config.toml");
+            assert!(
+                config_text.contains(&format!("model_provider = \"{expected_model_provider}\"")),
+                "migrated config should preserve provider identity: {config_text}"
+            );
+        }
+
+        let guard = state.config.read().expect("read in-memory config");
+        let manager = guard
+            .get_manager(&crate::app_config::AppType::Codex)
+            .expect("codex manager");
+        let provider = manager
+            .providers
+            .get("legacy-flat")
+            .expect("legacy provider should exist in memory");
+        assert!(
+            provider.settings_config.get("config").is_none(),
+            "in-memory startup config should also use structured Codex storage"
+        );
     }
 
     #[test]
@@ -899,6 +1013,16 @@ requires_openai_auth = true
                 .unwrap_or_else(|| panic!("{provider_id} should be seeded"));
             assert_eq!(provider.name, name);
             assert_eq!(provider.category.as_deref(), Some("official"));
+            if app == "codex" {
+                assert!(
+                    provider.settings_config.get("config").is_none(),
+                    "Codex official seed should not store legacy whole-file config strings"
+                );
+                assert!(
+                    provider.settings_config.get("codex").is_some(),
+                    "Codex official seed should store structured settingsConfig.codex"
+                );
+            }
         }
     }
 

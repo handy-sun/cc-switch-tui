@@ -429,7 +429,10 @@ pub(super) fn settings_contain_common_config(
             Err(_) => false,
         },
         AppType::Codex => {
-            let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
+            let config_toml = match crate::codex_config::codex_config_text_from_settings(settings) {
+                Ok(config_toml) => config_toml,
+                Err(_) => return false,
+            };
             if config_toml.trim().is_empty() {
                 return false;
             }
@@ -506,7 +509,13 @@ pub(super) fn apply_common_config_to_settings(
             };
 
             let mut result = settings.clone();
-            let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
+            let prefer_structured = settings
+                .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+                .is_some()
+                && settings
+                    .get(crate::codex_config::CODEX_LEGACY_CONFIG_KEY)
+                    .is_none();
+            let config_toml = crate::codex_config::codex_config_text_from_settings(settings)?;
             let mut target_doc = if config_toml.trim().is_empty() {
                 DocumentMut::new()
             } else {
@@ -519,9 +528,11 @@ pub(super) fn apply_common_config_to_settings(
             let source_doc = parse_codex_snippet(&snippet)?;
 
             merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
-            if let Some(obj) = result.as_object_mut() {
-                obj.insert("config".to_string(), Value::String(target_doc.to_string()));
-            }
+            crate::codex_config::set_codex_config_text_in_settings(
+                &mut result,
+                &target_doc.to_string(),
+                prefer_structured,
+            )?;
             Ok(result)
         }
         AppType::Gemini => {
@@ -561,7 +572,13 @@ pub(super) fn remove_common_config_from_settings(
             };
 
             let mut result = settings.clone();
-            let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
+            let prefer_structured = settings
+                .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+                .is_some()
+                && settings
+                    .get(crate::codex_config::CODEX_LEGACY_CONFIG_KEY)
+                    .is_none();
+            let config_toml = crate::codex_config::codex_config_text_from_settings(settings)?;
             let mut target_doc = if config_toml.trim().is_empty() {
                 DocumentMut::new()
             } else {
@@ -574,9 +591,11 @@ pub(super) fn remove_common_config_from_settings(
             let source_doc = parse_codex_snippet(&snippet)?;
 
             remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
-            if let Some(obj) = result.as_object_mut() {
-                obj.insert("config".to_string(), Value::String(target_doc.to_string()));
-            }
+            crate::codex_config::set_codex_config_text_in_settings(
+                &mut result,
+                &target_doc.to_string(),
+                prefer_structured,
+            )?;
             Ok(result)
         }
         AppType::Gemini => {

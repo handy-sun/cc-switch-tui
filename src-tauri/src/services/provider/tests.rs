@@ -61,6 +61,11 @@ fn codex_settings(config: &str) -> Value {
     })
 }
 
+fn codex_config_text(settings: &Value) -> String {
+    crate::codex_config::codex_config_text_from_settings(settings)
+        .expect("Codex settings should render to config.toml")
+}
+
 fn with_common_enabled(mut provider: Provider) -> Provider {
     provider
         .meta
@@ -114,11 +119,15 @@ fn capture_codex_temp_launch_snapshot_persists_auth_and_config() {
             .and_then(Value::as_str),
         Some("new-refresh")
     );
-    let stored_config = provider
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("stored config");
+    let stored_config = codex_config_text(&provider.settings_config);
+    assert!(
+        provider.settings_config.get("config").is_none(),
+        "captured Codex temp snapshots should not persist legacy whole-file config strings"
+    );
+    assert!(
+        provider.settings_config.get("codex").is_some(),
+        "captured Codex temp snapshots should persist structured settingsConfig.codex"
+    );
     assert!(stored_config.contains("model_reasoning_effort = \"high\""));
     assert!(
         !stored_config.contains("mcp_servers"),
@@ -614,11 +623,7 @@ fn switch_codex_writes_auth_json_when_live_auth_file_is_missing() {
         Some("sk-keyring")
     );
     // After the switch, the stored config should match the live config.toml
-    let stored_config = provider
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let stored_config = codex_config_text(&provider.settings_config);
     assert!(
         !stored_config.is_empty() || !live_config_text.trim().is_empty(),
         "provider snapshot should have config text after switch"
@@ -811,11 +816,7 @@ fn codex_switch_preserves_base_url_and_wire_api_across_multiple_switches() {
     let guard = state.config.read().expect("read config");
     let manager = guard.get_manager(&AppType::Codex).expect("codex manager");
     let provider = manager.providers.get("p1").expect("p1 exists");
-    let cfg = provider
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let cfg = codex_config_text(&provider.settings_config);
     assert!(
         cfg.contains("base_url = \"https://api.one.example/v1\""),
         "provider snapshot should retain base_url across switches"
@@ -898,14 +899,12 @@ trust_level = "trusted"
 
     let cfg = state.config.read().expect("read config after switch");
     let manager = cfg.get_manager(&AppType::Codex).expect("codex manager");
-    let p1_stored = manager
+    let p1_settings = &manager
         .providers
         .get("p1")
         .expect("p1 exists")
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("p1 config should be string");
+        .settings_config;
+    let p1_stored = codex_config_text(p1_settings);
     assert!(
         !p1_stored.contains("[projects."),
         "runtime project trust should remain live-local, not be stored in provider snapshots"
@@ -914,14 +913,12 @@ trust_level = "trusted"
         p1_stored.contains("base_url = \"https://api.one-live.example/v1\""),
         "effective current provider should receive live provider settings"
     );
-    let p2_stored = manager
+    let p2_settings = &manager
         .providers
         .get("p2")
         .expect("p2 exists")
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("p2 config should be string");
+        .settings_config;
+    let p2_stored = codex_config_text(p2_settings);
     assert!(
         !p2_stored.contains("[projects."),
         "refreshed target provider snapshot should not keep runtime project trust"
@@ -941,11 +938,7 @@ trust_level = "trusted"
         .get_provider_by_id("p1", AppType::Codex.as_str())
         .expect("read p1 from db")
         .expect("p1 should exist in db");
-    let db_p1_config = db_p1
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("db p1 config should be string");
+    let db_p1_config = codex_config_text(&db_p1.settings_config);
     assert!(
         !db_p1_config.contains("[projects."),
         "state.save should persist provider snapshots without runtime project trust"
@@ -966,6 +959,116 @@ trust_level = "trusted"
     assert!(
         p1_live.contains("[projects.\"/tmp/codex-project-a\"]"),
         "runtime project trust should survive switching away and back"
+    );
+}
+
+#[test]
+#[serial]
+fn codex_switch_backfills_provider_snapshot_as_structured_settings() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+    std::fs::create_dir_all(crate::codex_config::get_codex_config_dir())
+        .expect("create ~/.codex (initialized)");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Codex);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "p2".to_string();
+        manager.providers.insert(
+            "p1".to_string(),
+            Provider::with_id(
+                "p1".to_string(),
+                "Provider One".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-one-stale" },
+                    "config": "model_provider = \"one\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.one]\nbase_url = \"https://api.one.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "p2".to_string(),
+            Provider::with_id(
+                "p2".to_string(),
+                "Provider Two".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-two" },
+                    "config": "model_provider = \"two\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.two]\nbase_url = \"https://api.two.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = state_from_config(config);
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "p1")
+        .expect("set db current provider to p1");
+
+    crate::config::write_json_file(
+        &get_codex_auth_path(),
+        &json!({ "OPENAI_API_KEY": "sk-one-live" }),
+    )
+    .expect("seed live auth.json");
+    std::fs::write(
+        get_codex_config_path(),
+        r#"model_provider = "one"
+model = "gpt-5.2-codex"
+
+[model_providers.one]
+base_url = "https://api.one-live.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[projects."/tmp/codex-project-a"]
+trust_level = "trusted"
+"#,
+    )
+    .expect("seed live config.toml");
+
+    ProviderService::switch(&state, AppType::Codex, "p2").expect("switch to p2");
+
+    let cfg = state.config.read().expect("read config after switch");
+    let manager = cfg.get_manager(&AppType::Codex).expect("codex manager");
+    let p1_settings = &manager
+        .providers
+        .get("p1")
+        .expect("p1 exists")
+        .settings_config;
+
+    assert!(
+        p1_settings.get("config").is_none(),
+        "provider snapshots should not persist the whole config.toml string"
+    );
+    assert_eq!(
+        p1_settings
+            .pointer("/codex/model_providers/one/base_url")
+            .and_then(Value::as_str),
+        Some("https://api.one-live.example/v1")
+    );
+    assert_eq!(
+        p1_settings
+            .pointer("/codex/model_provider")
+            .and_then(Value::as_str),
+        Some("one")
+    );
+    assert!(
+        p1_settings.pointer("/codex/projects").is_none(),
+        "runtime project trust should remain live-local"
+    );
+
+    let live_text = std::fs::read_to_string(get_codex_config_path()).expect("read live config");
+    assert!(
+        live_text.contains("base_url = \"https://api.two.example/v1\""),
+        "structured snapshots must still render to live config.toml"
+    );
+    assert!(
+        live_text.contains("[projects.\"/tmp/codex-project-a\"]"),
+        "switching must still preserve runtime project trust in live config"
     );
 }
 
@@ -3195,11 +3298,7 @@ fn provider_add_strips_common_snippet_before_codex_snapshot_persist() {
         .providers
         .get("p1")
         .expect("p1 exists");
-    let stored_config = provider
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("stored codex config should be string");
+    let stored_config = codex_config_text(&provider.settings_config);
 
     assert!(
         !stored_config.contains("disable_response_storage = true"),
@@ -3684,16 +3783,14 @@ fn codex_switch_auto_extracted_common_normalizes_other_existing_provider_snapsho
         "switch should persist the auto-extracted common snippet"
     );
 
-    let p3_stored = cfg
+    let p3_settings = &cfg
         .get_manager(&AppType::Codex)
         .expect("codex manager")
         .providers
         .get("p3")
         .expect("p3 exists")
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("stored codex config should be string");
+        .settings_config;
+    let p3_stored = codex_config_text(p3_settings);
 
     assert!(
         !p3_stored.contains("disable_response_storage = true"),
@@ -3917,11 +4014,7 @@ fn updating_common_snippet_removes_stale_fields_from_other_codex_provider_snapsh
         .providers
         .get("p2")
         .expect("p2 exists");
-    let stored_config = p2_after
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("stored codex config should be string");
+    let stored_config = codex_config_text(&p2_after.settings_config);
 
     assert!(
         !stored_config.contains("disable_response_storage = true"),
@@ -3983,16 +4076,14 @@ fn setting_codex_common_snippet_normalizes_existing_provider_snapshot() {
     .expect("set common snippet");
 
     let cfg = state.config.read().expect("read config after update");
-    let stored_config = cfg
+    let stored_settings = &cfg
         .get_manager(&AppType::Codex)
         .expect("codex manager")
         .providers
         .get("p1")
         .expect("p1 exists")
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("stored codex config should be string");
+        .settings_config;
+    let stored_config = codex_config_text(stored_settings);
 
     assert!(
         !stored_config.contains("disable_response_storage = true"),
@@ -4111,11 +4202,7 @@ fn import_default_config_preserves_codex_common_snippet_in_db_snapshot() {
         .get_provider_by_id("default", AppType::Codex.as_str())
         .expect("read imported codex provider")
         .expect("default provider exists");
-    let stored_config = provider
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .expect("stored codex config should be string");
+    let stored_config = codex_config_text(&provider.settings_config);
 
     assert!(
         stored_config.contains("disable_response_storage = true"),
@@ -4410,11 +4497,7 @@ wire_api = "responses"
         .get("merge-key")
         .expect("key-merged provider");
     assert!(
-        key_merged
-            .settings_config
-            .get("config")
-            .and_then(Value::as_str)
-            .is_some_and(|config| config.contains("https://key.example/v2")),
+        codex_config_text(&key_merged.settings_config).contains("https://key.example/v2"),
         "key-based merge should refresh the stored config"
     );
 

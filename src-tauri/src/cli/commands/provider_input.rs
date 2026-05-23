@@ -29,7 +29,11 @@ mod tests {
             "official Codex provider should carry auth like upstream snapshots"
         );
         assert_eq!(cfg.get("auth"), Some(&json!({})));
-        assert_eq!(cfg.get("config"), Some(&json!("")));
+        assert_eq!(cfg.get("codex"), Some(&json!({})));
+        assert!(
+            cfg.get("config").is_none(),
+            "new Codex snapshots should not store the whole config.toml string"
+        );
     }
 
     #[test]
@@ -50,9 +54,11 @@ mod tests {
                 "refresh_token": "refresh-token"
             }))
         );
+        assert!(cfg.get("config").is_none());
         assert_eq!(
-            cfg.get("config").and_then(Value::as_str),
-            Some("model_reasoning_effort = \"high\"")
+            crate::codex_config::codex_config_text_from_settings(&cfg)
+                .expect("Codex settings should render to config.toml"),
+            "model_reasoning_effort = \"high\""
         );
     }
 
@@ -66,10 +72,9 @@ mod tests {
             "custom",
         );
 
-        let config = cfg
-            .get("config")
-            .and_then(Value::as_str)
-            .expect("config should be present");
+        assert!(cfg.get("config").is_none());
+        let config = crate::codex_config::codex_config_text_from_settings(&cfg)
+            .expect("Codex settings should render to config.toml");
         assert!(config.contains("model = \"gpt-5.4\""));
         assert!(config.contains("base_url = \"https://api.example.com/v1\""));
     }
@@ -126,13 +131,16 @@ fn build_codex_settings_config(
     ]
     .join("\n");
 
+    let codex = crate::codex_config::codex_structured_config_from_toml(&config_toml)
+        .expect("generated Codex config.toml should be valid");
+
     match api_key {
         Some(key) => json!({
             "auth": { "OPENAI_API_KEY": key.trim() },
-            "config": config_toml
+            "codex": codex
         }),
         None => json!({
-            "config": config_toml
+            "codex": codex
         }),
     }
 }
@@ -144,14 +152,14 @@ fn build_codex_official_settings_config(current: Option<&Value>) -> Result<Value
         .map(|value| Value::Object(value.clone()))
         .unwrap_or_else(|| json!({}));
     let config = current
-        .and_then(|value| value.get("config"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let cleaned_config = crate::codex_config::strip_codex_provider_config_text(config)?;
+        .and_then(|value| crate::codex_config::codex_config_text_from_settings(value).ok())
+        .unwrap_or_default();
+    let cleaned_config = crate::codex_config::strip_codex_provider_config_text(&config)?;
+    let codex = crate::codex_config::codex_structured_config_from_toml(&cleaned_config)?;
 
     Ok(json!({
         "auth": auth,
-        "config": cleaned_config
+        "codex": codex
     }))
 }
 
@@ -283,11 +291,10 @@ pub fn prompt_settings_config(
                 .and_then(|v| v.as_object())
                 .map(|obj| !obj.is_empty())
                 .unwrap_or(false);
-            let current_config_str = current
-                .and_then(|v| v.get("config"))
-                .and_then(|c| c.as_str());
+            let current_config_str =
+                current.and_then(|v| crate::codex_config::codex_config_text_from_settings(v).ok());
             let mut current_base_url: Option<String> = None;
-            if let Some(cfg) = current_config_str {
+            if let Some(cfg) = current_config_str.as_deref() {
                 if let Ok(table) = toml::from_str::<toml::Table>(cfg) {
                     current_base_url = table
                         .get("base_url")
@@ -496,13 +503,12 @@ fn prompt_codex_config(current: Option<&Value>) -> Result<Value, AppError> {
         .and_then(|k| k.as_str())
         .filter(|s| !s.is_empty());
 
-    let current_config_str = current
-        .and_then(|v| v.get("config"))
-        .and_then(|c| c.as_str());
+    let current_config_str =
+        current.and_then(|v| crate::codex_config::codex_config_text_from_settings(v).ok());
 
     let mut current_base_url: Option<String> = None;
     let mut current_model: Option<String> = None;
-    if let Some(cfg) = current_config_str {
+    if let Some(cfg) = current_config_str.as_deref() {
         if let Ok(table) = toml::from_str::<toml::Table>(cfg) {
             current_base_url = table
                 .get("base_url")
@@ -589,7 +595,7 @@ fn prompt_codex_config(current: Option<&Value>) -> Result<Value, AppError> {
     ))
 }
 
-/// Codex 配置输入（官方：仍写入 provider snapshot 的 auth/config）
+/// Codex 配置输入（官方：保留 auth，并写入结构化 config.toml 快照）
 fn prompt_codex_official_config(current: Option<&Value>) -> Result<Value, AppError> {
     println!("\n{}", texts::config_codex_header().bright_cyan().bold());
     println!(
@@ -782,10 +788,8 @@ pub fn display_provider_summary(provider: &Provider, app_type: &AppType) {
                     );
                 }
             }
-            if let Some(config) = provider
-                .settings_config
-                .get("config")
-                .and_then(|v| v.as_str())
+            if let Ok(config) =
+                crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
             {
                 println!("  {}", texts::config_toml_lines(config.lines().count()));
             }

@@ -46,13 +46,10 @@ fn validate_provider_submit(
     }
 
     if matches!(app_type, AppType::Codex) && !is_codex_official_provider(provider) {
-        let parsed = crate::cli::tui::form::parse_codex_config_snippet(
-            provider
-                .settings_config
-                .get("config")
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-        );
+        let config_text =
+            crate::codex_config::codex_config_text_from_settings(&provider.settings_config)
+                .unwrap_or_default();
+        let parsed = crate::cli::tui::form::parse_codex_config_snippet(&config_text);
         if parsed
             .base_url
             .as_deref()
@@ -1341,9 +1338,9 @@ mod tests {
             .iter()
             .find(|row| row.id == "codex-provider")
             .expect("provider should remain present");
-        let config_text = row.provider.settings_config["config"]
-            .as_str()
-            .expect("codex config text should remain present");
+        let config_text =
+            crate::codex_config::codex_config_text_from_settings(&row.provider.settings_config)
+                .expect("codex config text should render");
         assert!(
             config_text.contains("base_url = \"https://api.example.com/v1\""),
             "failed edit should keep the existing base_url intact"

@@ -136,7 +136,7 @@ fn build_provider_from_request(
 ) -> Result<Provider, AppError> {
     let settings_config = match app_type {
         AppType::Claude => build_claude_settings(request),
-        AppType::Codex => build_codex_settings(request),
+        AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_openclaw_settings(request),
@@ -257,7 +257,7 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!({ "env": env })
 }
 
-fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+fn build_codex_settings(request: &DeepLinkImportRequest) -> Result<serde_json::Value, AppError> {
     let model_name = request
         .model
         .as_deref()
@@ -285,12 +285,12 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
          env_key = \"OPENAI_API_KEY\""
     );
 
-    json!({
-        "auth": {
-            "OPENAI_API_KEY": request.api_key,
-        },
-        "config": config_snippet
-    })
+    crate::codex_config::codex_settings_snapshot_from_toml(
+        Some(json!({
+            "OPENAI_API_KEY": request.api_key.clone().unwrap_or_default(),
+        })),
+        &config_snippet,
+    )
 }
 
 fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
@@ -516,8 +516,8 @@ fn merge_codex_config(
         }
     }
 
-    if let Some(config_str) = config.get("config").and_then(|v| v.as_str()) {
-        if let Ok(toml_value) = toml::from_str::<toml::Value>(config_str) {
+    if let Ok(config_str) = crate::codex_config::codex_config_text_from_settings(config) {
+        if let Ok(toml_value) = toml::from_str::<toml::Value>(&config_str) {
             if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
                 if let Some(base_url) = extract_codex_base_url(&toml_value) {
                     request.endpoint = Some(base_url);
@@ -744,4 +744,38 @@ fn extract_codex_base_url(toml_value: &toml::Value) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_codex_settings_outputs_structured_config() {
+        let request = crate::deeplink::parse_deeplink_url(
+            "ccswitch://v1/import?resource=provider&app=codex&name=DeepLink%20Codex&endpoint=https%3A%2F%2Fapi.openai.example%2Fv1&apiKey=sk-test-codex-key&model=gpt-4o",
+        )
+        .expect("parse deeplink url");
+
+        let settings = build_codex_settings(&request).expect("build Codex settings");
+
+        assert_eq!(
+            settings
+                .pointer("/auth/OPENAI_API_KEY")
+                .and_then(Value::as_str),
+            Some("sk-test-codex-key")
+        );
+        assert!(
+            settings.get("config").is_none(),
+            "deeplink Codex import should not create legacy whole-file config strings"
+        );
+        assert!(
+            settings.get("codex").is_some(),
+            "deeplink Codex import should create structured settingsConfig.codex"
+        );
+        let config_text = crate::codex_config::codex_config_text_from_settings(&settings)
+            .expect("Codex settings should render to config.toml");
+        assert!(config_text.contains("base_url = \"https://api.openai.example/v1\""));
+        assert!(config_text.contains("model = \"gpt-4o\""));
+    }
 }
