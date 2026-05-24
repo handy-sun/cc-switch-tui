@@ -156,6 +156,8 @@ pub enum ProviderAddField {
     #[allow(dead_code)]
     CodexEnvKey,
     CodexApiKey,
+    CodexAutoCompactTokenLimit,
+    CodexContextWindow,
     GeminiAuthType,
     GeminiApiKey,
     GeminiBaseUrl,
@@ -244,6 +246,8 @@ pub struct ProviderAddFormState {
     pub codex_requires_openai_auth: bool,
     pub codex_env_key: TextInput,
     pub codex_api_key: TextInput,
+    pub codex_auto_compact_token_limit: TextInput,
+    pub codex_context_window: TextInput,
 
     pub gemini_auth_type: GeminiAuthType,
     pub gemini_api_key: TextInput,

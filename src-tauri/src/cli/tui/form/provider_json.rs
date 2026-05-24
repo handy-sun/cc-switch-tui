@@ -139,6 +139,12 @@ impl ProviderAddFormState {
                         self.codex_wire_api,
                         self.codex_requires_openai_auth,
                         self.codex_env_key.value.trim(),
+                        self.codex_auto_compact_token_limit
+                            .value
+                            .trim()
+                            .parse()
+                            .unwrap_or(0),
+                        self.codex_context_window.value.trim().parse().unwrap_or(0),
                     );
                     set_codex_config_snapshot(settings_obj, &config_toml);
 

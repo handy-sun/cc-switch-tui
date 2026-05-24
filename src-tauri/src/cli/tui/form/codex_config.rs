@@ -7,6 +7,8 @@ pub(crate) struct ParsedCodexConfigSnippet {
     pub(crate) wire_api: Option<CodexWireApi>,
     pub(crate) requires_openai_auth: Option<bool>,
     pub(crate) env_key: Option<String>,
+    pub(crate) model_auto_compact_token_limit: Option<u64>,
+    pub(crate) model_context_window: Option<u64>,
 }
 
 pub(crate) fn parse_codex_config_snippet(cfg: &str) -> ParsedCodexConfigSnippet {
@@ -52,6 +54,14 @@ pub(crate) fn parse_codex_config_snippet(cfg: &str) -> ParsedCodexConfigSnippet 
             .get("env_key")
             .and_then(|value| value.as_str())
             .map(String::from);
+        out.model_auto_compact_token_limit = section
+            .get("model_auto_compact_token_limit")
+            .and_then(|value| value.as_integer())
+            .and_then(|v| u64::try_from(v).ok());
+        out.model_context_window = section
+            .get("model_context_window")
+            .and_then(|value| value.as_integer())
+            .and_then(|v| u64::try_from(v).ok());
     }
 
     out
@@ -64,6 +74,8 @@ pub(crate) fn update_codex_config_snippet(
     wire_api: CodexWireApi,
     requires_openai_auth: bool,
     env_key: &str,
+    model_auto_compact_token_limit: u64,
+    model_context_window: u64,
 ) -> String {
     let mut doc = match original.trim().parse::<toml_edit::DocumentMut>() {
         Ok(doc) => doc,
@@ -113,6 +125,26 @@ pub(crate) fn update_codex_config_snippet(
             } else {
                 let env_key = non_empty(env_key).unwrap_or("OPENAI_API_KEY");
                 section.insert("env_key", toml_edit::value(env_key));
+            }
+
+            if model_auto_compact_token_limit > 0 {
+                section.insert(
+                    "model_auto_compact_token_limit",
+                    toml_edit::value(
+                        i64::try_from(model_auto_compact_token_limit).unwrap_or(i64::MAX),
+                    ),
+                );
+            } else {
+                section.remove("model_auto_compact_token_limit");
+            }
+
+            if model_context_window > 0 {
+                section.insert(
+                    "model_context_window",
+                    toml_edit::value(i64::try_from(model_context_window).unwrap_or(i64::MAX)),
+                );
+            } else {
+                section.remove("model_context_window");
             }
         }
     }

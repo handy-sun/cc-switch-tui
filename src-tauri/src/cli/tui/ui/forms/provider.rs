@@ -301,6 +301,10 @@ pub(crate) fn provider_field_label_and_value(
             strip_trailing_colon(texts::codex_env_key_label()).to_string()
         }
         ProviderAddField::CodexApiKey => texts::tui_label_api_key().to_string(),
+        ProviderAddField::CodexAutoCompactTokenLimit => {
+            texts::tui_label_codex_auto_compact_token_limit().to_string()
+        }
+        ProviderAddField::CodexContextWindow => texts::tui_label_codex_context_window().to_string(),
         ProviderAddField::GeminiAuthType => {
             strip_trailing_colon(texts::auth_type_label()).to_string()
         }

@@ -56,6 +56,22 @@ pub fn tui_label_output_limit() -> &'static str {
     }
 }
 
+pub fn tui_label_codex_auto_compact_token_limit() -> &'static str {
+    if is_chinese() {
+        "自动压缩令牌上限"
+    } else {
+        "Auto Compact Token Limit"
+    }
+}
+
+pub fn tui_label_codex_context_window() -> &'static str {
+    if is_chinese() {
+        "上下文窗口"
+    } else {
+        "Context Window"
+    }
+}
+
 pub fn tui_label_command() -> &'static str {
     if is_chinese() {
         "命令"
