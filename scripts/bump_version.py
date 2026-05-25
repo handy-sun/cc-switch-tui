@@ -13,8 +13,7 @@ from pathlib import Path
 
 PROJECT_NAME = "cc-switch-tui"
 SEMVER_RE = re.compile(
-    r"^(?:v)?(?P<version>0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+    r"^(?:v)?(?P<version>(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$"
 )
 
 
@@ -32,8 +31,8 @@ def repo_root() -> Path:
 def normalize_version(raw: str) -> str:
     match = SEMVER_RE.fullmatch(raw.strip())
     if not match:
-        raise ValueError("Version must be semver, for example 1.2.3 or v1.2.3")
-    return raw.strip().lstrip("v")
+        raise ValueError("Version must use X.Y.Z format, for example 1.2.3 or v1.2.3")
+    return match.group("version")
 
 
 def replace_package_version_in_cargo_toml(text: str, version: str) -> tuple[str, str]:
@@ -52,13 +51,17 @@ def replace_package_version_in_cargo_toml(text: str, version: str) -> tuple[str,
             match = re.match(
                 r'(?P<prefix>\s*version\s*=\s*")'
                 r'(?P<version>[^"]+)'
-                r'(?P<suffix>".*)',
+                r'(?P<suffix>".*?)'
+                r'(?P<newline>\r?\n)?$',
                 line,
             )
             if not match:
                 raise ValueError("Could not parse package version in Cargo.toml")
             old_version = match.group("version")
-            line = f'{match.group("prefix")}{version}{match.group("suffix")}'
+            line = (
+                f'{match.group("prefix")}{version}{match.group("suffix")}'
+                f'{match.group("newline") or ""}'
+            )
 
         output.append(line)
 
