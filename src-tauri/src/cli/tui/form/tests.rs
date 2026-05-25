@@ -2829,3 +2829,178 @@ fn provider_edit_form_roundtrip_preserves_upstream_meta_auth_and_type_fields() {
         Some("gh-123")
     );
 }
+
+// -- parse_token_count validation --
+
+#[test]
+fn parse_token_count_accepts_valid_positive_integer() {
+    assert_eq!(
+        super::codex_config::parse_token_count("200000"),
+        Ok(Some(200_000))
+    );
+}
+
+#[test]
+fn parse_token_count_accepts_max_boundary() {
+    assert_eq!(
+        super::codex_config::parse_token_count("100000000"),
+        Ok(Some(100_000_000))
+    );
+}
+
+#[test]
+fn parse_token_count_returns_none_for_empty() {
+    assert_eq!(super::codex_config::parse_token_count(""), Ok(None));
+    assert_eq!(super::codex_config::parse_token_count("   "), Ok(None));
+}
+
+#[test]
+fn parse_token_count_rejects_zero() {
+    assert!(super::codex_config::parse_token_count("0").is_err());
+}
+
+#[test]
+fn parse_token_count_rejects_non_numeric() {
+    assert!(super::codex_config::parse_token_count("abc").is_err());
+    assert!(super::codex_config::parse_token_count("12.5").is_err());
+    assert!(super::codex_config::parse_token_count("-1").is_err());
+}
+
+#[test]
+fn parse_token_count_rejects_exceeds_max() {
+    assert!(super::codex_config::parse_token_count("100000001").is_err());
+}
+
+// -- update_codex_config_snippet with token fields --
+
+#[test]
+fn codex_config_snippet_writes_valid_auto_compact_token_limit() {
+    let base = super::codex_config::build_codex_provider_config_toml(
+        "prov1",
+        "https://example.com",
+        "gpt-5",
+        super::CodexWireApi::Responses,
+    );
+    let result = super::codex_config::update_codex_config_snippet(
+        &base,
+        "https://example.com",
+        "gpt-5",
+        super::CodexWireApi::Responses,
+        true,
+        "",
+        50000,
+        0,
+    );
+    assert!(result.contains("model_auto_compact_token_limit = 50000"));
+}
+
+#[test]
+fn codex_config_snippet_writes_valid_context_window() {
+    let base = super::codex_config::build_codex_provider_config_toml(
+        "prov1",
+        "https://example.com",
+        "gpt-5",
+        super::CodexWireApi::Responses,
+    );
+    let result = super::codex_config::update_codex_config_snippet(
+        &base,
+        "https://example.com",
+        "gpt-5",
+        super::CodexWireApi::Responses,
+        true,
+        "",
+        0,
+        200000,
+    );
+    assert!(result.contains("model_context_window = 200000"));
+}
+
+#[test]
+fn codex_config_snippet_drops_zero_token_fields() {
+    let base = super::codex_config::build_codex_provider_config_toml(
+        "prov1",
+        "https://example.com",
+        "gpt-5",
+        super::CodexWireApi::Responses,
+    );
+    let result = super::codex_config::update_codex_config_snippet(
+        &base,
+        "https://example.com",
+        "gpt-5",
+        super::CodexWireApi::Responses,
+        true,
+        "",
+        0,
+        0,
+    );
+    assert!(!result.contains("model_auto_compact_token_limit"));
+    assert!(!result.contains("model_context_window"));
+}
+
+// -- Form-level validation: invalid input prompts before output is generated --
+
+#[test]
+fn codex_form_non_numeric_context_window_is_rejected() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    form.id.set("test1");
+    form.name.set("Test Provider");
+    form.codex_base_url.set("https://example.com");
+    form.codex_context_window.set("abc");
+
+    assert_eq!(
+        super::codex_config::validate_token_count_pair(
+            &form.codex_auto_compact_token_limit.value,
+            &form.codex_context_window.value,
+        ),
+        Some(crate::cli::i18n::texts::codex_context_window_invalid())
+    );
+}
+
+#[test]
+fn codex_form_non_numeric_auto_compact_is_rejected() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    form.id.set("test2");
+    form.name.set("Test Provider");
+    form.codex_base_url.set("https://example.com");
+    form.codex_auto_compact_token_limit.set("not-a-number");
+
+    assert_eq!(
+        super::codex_config::validate_token_count_pair(
+            &form.codex_auto_compact_token_limit.value,
+            &form.codex_context_window.value,
+        ),
+        Some(crate::cli::i18n::texts::codex_auto_compact_token_limit_invalid())
+    );
+}
+
+#[test]
+fn codex_form_zero_context_window_is_rejected() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    form.id.set("test3");
+    form.name.set("Test Provider");
+    form.codex_base_url.set("https://example.com");
+    form.codex_context_window.set("0");
+
+    assert_eq!(
+        super::codex_config::validate_token_count_pair(
+            &form.codex_auto_compact_token_limit.value,
+            &form.codex_context_window.value,
+        ),
+        Some(crate::cli::i18n::texts::codex_context_window_invalid())
+    );
+}
+
+#[test]
+fn codex_form_valid_token_fields_are_stored() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    form.id.set("test4");
+    form.name.set("Test Provider");
+    form.codex_base_url.set("https://example.com");
+    form.codex_auto_compact_token_limit.set("50000");
+    form.codex_context_window.set("200000");
+
+    let provider = form.to_provider_json_value();
+    let cfg = codex_form_config_text(&provider);
+    assert!(cfg.contains("model_auto_compact_token_limit = 50000"));
+    assert!(cfg.contains("model_context_window = 200000"));
+}

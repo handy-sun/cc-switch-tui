@@ -61,6 +61,8 @@ impl ProviderAddFormState {
             codex_requires_openai_auth: codex_defaults.3,
             codex_env_key: TextInput::new("OPENAI_API_KEY"),
             codex_api_key: TextInput::new(""),
+            codex_auto_compact_token_limit: TextInput::new(""),
+            codex_context_window: TextInput::new(""),
             gemini_auth_type: GeminiAuthType::ApiKey,
             gemini_api_key: TextInput::new(""),
             gemini_base_url: TextInput::new("https://generativelanguage.googleapis.com"),
@@ -168,6 +170,8 @@ impl ProviderAddFormState {
                     fields.push(ProviderAddField::CodexBaseUrl);
                     fields.push(ProviderAddField::CodexModel);
                     fields.push(ProviderAddField::CodexApiKey);
+                    fields.push(ProviderAddField::CodexAutoCompactTokenLimit);
+                    fields.push(ProviderAddField::CodexContextWindow);
                 }
             }
             AppType::Gemini => {
@@ -223,6 +227,10 @@ impl ProviderAddFormState {
             ProviderAddField::CodexModel => Some(&self.codex_model),
             ProviderAddField::CodexEnvKey => Some(&self.codex_env_key),
             ProviderAddField::CodexApiKey => Some(&self.codex_api_key),
+            ProviderAddField::CodexAutoCompactTokenLimit => {
+                Some(&self.codex_auto_compact_token_limit)
+            }
+            ProviderAddField::CodexContextWindow => Some(&self.codex_context_window),
             ProviderAddField::GeminiApiKey => Some(&self.gemini_api_key),
             ProviderAddField::GeminiBaseUrl => Some(&self.gemini_base_url),
             ProviderAddField::GeminiModel => Some(&self.gemini_model),
@@ -260,6 +268,10 @@ impl ProviderAddFormState {
             ProviderAddField::CodexModel => Some(&mut self.codex_model),
             ProviderAddField::CodexEnvKey => Some(&mut self.codex_env_key),
             ProviderAddField::CodexApiKey => Some(&mut self.codex_api_key),
+            ProviderAddField::CodexAutoCompactTokenLimit => {
+                Some(&mut self.codex_auto_compact_token_limit)
+            }
+            ProviderAddField::CodexContextWindow => Some(&mut self.codex_context_window),
             ProviderAddField::GeminiApiKey => Some(&mut self.gemini_api_key),
             ProviderAddField::GeminiBaseUrl => Some(&mut self.gemini_base_url),
             ProviderAddField::GeminiModel => Some(&mut self.gemini_model),

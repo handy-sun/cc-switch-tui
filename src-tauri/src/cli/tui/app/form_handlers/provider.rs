@@ -67,6 +67,13 @@ impl App {
                 && provider.codex_base_url.is_blank()
             {
                 Some(texts::base_url_empty_error())
+            } else if matches!(provider.app_type, crate::app_config::AppType::Codex)
+                && !provider.is_codex_official_provider()
+            {
+                crate::cli::tui::form::validate_token_count_pair(
+                    &provider.codex_auto_compact_token_limit.value,
+                    &provider.codex_context_window.value,
+                )
             } else if !provider.ensure_generated_id(&collect_existing_provider_ids(data)) {
                 Some(if provider.mode.is_edit() {
                     texts::tui_toast_provider_missing_name()

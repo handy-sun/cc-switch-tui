@@ -15,7 +15,10 @@ mod tests;
 pub(crate) use provider_json::strip_provider_internal_fields;
 
 pub(crate) use super::text_edit::TextInput;
-pub(crate) use codex_config::parse_codex_config_snippet;
+pub(crate) use codex_config::{
+    parse_codex_config_snippet, parse_token_count, validate_codex_config_token_counts,
+    validate_token_count_pair,
+};
 pub(crate) use provider_json::claude_hide_attribution_enabled;
 pub(crate) use provider_json::strip_common_config_from_settings;
 pub(crate) use provider_state::resolve_provider_id_for_submit;
@@ -156,6 +159,8 @@ pub enum ProviderAddField {
     #[allow(dead_code)]
     CodexEnvKey,
     CodexApiKey,
+    CodexAutoCompactTokenLimit,
+    CodexContextWindow,
     GeminiAuthType,
     GeminiApiKey,
     GeminiBaseUrl,
@@ -244,6 +249,8 @@ pub struct ProviderAddFormState {
     pub codex_requires_openai_auth: bool,
     pub codex_env_key: TextInput,
     pub codex_api_key: TextInput,
+    pub codex_auto_compact_token_limit: TextInput,
+    pub codex_context_window: TextInput,
 
     pub gemini_auth_type: GeminiAuthType,
     pub gemini_api_key: TextInput,

@@ -57,6 +57,12 @@ fn validate_provider_submit(
         {
             return Some(texts::base_url_empty_error());
         }
+
+        if let Some(message) =
+            crate::cli::tui::form::validate_codex_config_token_counts(&config_text)
+        {
+            return Some(message);
+        }
     }
 
     None
@@ -492,6 +498,11 @@ fn submit_provider_form_apply_codex_config_toml(
         };
         doc.to_string()
     };
+
+    if let Some(message) = crate::cli::tui::form::validate_codex_config_token_counts(&config_text) {
+        ctx.app.push_toast(message, ToastKind::Warning);
+        return Ok(());
+    }
 
     let provider_value = match ctx.app.form.as_ref() {
         Some(FormState::ProviderAdd(form)) => {
@@ -1113,6 +1124,109 @@ mod tests {
                 ..
             }) if message == texts::base_url_empty_error()
         ));
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn submit_provider_add_rejects_invalid_codex_token_count() {
+        let mut fixture = runtime_ctx(AppType::Codex);
+
+        let mut ctx = RuntimeActionContext {
+            terminal: &mut fixture.terminal,
+            app: &mut fixture.app,
+            data: &mut fixture.data,
+            speedtest_req_tx: None,
+            stream_check_req_tx: None,
+            skills_req_tx: None,
+            proxy_req_tx: None,
+            proxy_loading: &mut fixture.proxy_loading,
+            local_env_req_tx: None,
+            webdav_req_tx: None,
+            webdav_loading: &mut fixture.webdav_loading,
+            update_req_tx: None,
+            update_check: &mut fixture.update_check,
+            model_fetch_req_tx: None,
+        };
+
+        submit_provider_add(
+            &mut ctx,
+            r#"{
+  "id": "",
+  "name": "Codex Provider",
+  "settingsConfig": {
+    "auth": {
+      "OPENAI_API_KEY": "sk-test"
+    },
+    "config": "model_provider = \"custom\"\nmodel = \"gpt-5.4\"\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://api.example.com/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nmodel_context_window = -1\n"
+  }
+}"#
+            .to_string(),
+        )
+        .expect("submit should return without crashing");
+
+        let refreshed = UiData::load(&AppType::Codex).expect("reload ui data");
+        assert!(
+            refreshed.providers.rows.is_empty(),
+            "runtime submit should reject invalid Codex token counts"
+        );
+        assert!(matches!(
+            ctx.app.toast.as_ref(),
+            Some(Toast {
+                kind: ToastKind::Warning,
+                message,
+                ..
+            }) if message == texts::codex_context_window_invalid()
+        ));
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn submit_provider_form_apply_codex_config_toml_rejects_invalid_token_count() {
+        let mut fixture = runtime_ctx(AppType::Codex);
+        let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Codex);
+        form.name.set("Codex Provider");
+        form.codex_base_url.set("https://api.example.com/v1");
+        fixture.app.form = Some(FormState::ProviderAdd(form));
+
+        let mut ctx = RuntimeActionContext {
+            terminal: &mut fixture.terminal,
+            app: &mut fixture.app,
+            data: &mut fixture.data,
+            speedtest_req_tx: None,
+            stream_check_req_tx: None,
+            skills_req_tx: None,
+            proxy_req_tx: None,
+            proxy_loading: &mut fixture.proxy_loading,
+            local_env_req_tx: None,
+            webdav_req_tx: None,
+            webdav_loading: &mut fixture.webdav_loading,
+            update_req_tx: None,
+            update_check: &mut fixture.update_check,
+            model_fetch_req_tx: None,
+        };
+
+        submit_provider_form_apply_codex_config_toml(
+            &mut ctx,
+            "model_provider = \"custom\"\nmodel = \"gpt-5.4\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://api.example.com/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nmodel_context_window = -1\n"
+                .to_string(),
+        )
+        .expect("submit should return without crashing");
+
+        assert!(matches!(
+            ctx.app.toast.as_ref(),
+            Some(Toast {
+                kind: ToastKind::Warning,
+                message,
+                ..
+            }) if message == texts::codex_context_window_invalid()
+        ));
+        let Some(FormState::ProviderAdd(form)) = ctx.app.form.as_ref() else {
+            panic!("expected ProviderAdd form");
+        };
+        assert_eq!(
+            form.codex_context_window.value, "",
+            "invalid TOML should not be applied to form fields"
+        );
     }
 
     #[test]

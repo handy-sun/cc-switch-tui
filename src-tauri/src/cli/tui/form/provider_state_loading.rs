@@ -105,6 +105,12 @@ fn populate_codex_form(form: &mut ProviderAddFormState, provider: &Provider) {
         if let Some(env_key) = parsed.env_key {
             form.codex_env_key.set(env_key);
         }
+        if let Some(limit) = parsed.model_auto_compact_token_limit {
+            form.codex_auto_compact_token_limit.set(limit.to_string());
+        }
+        if let Some(window) = parsed.model_context_window {
+            form.codex_context_window.set(window.to_string());
+        }
     }
     if let Some(auth) = provider
         .settings_config

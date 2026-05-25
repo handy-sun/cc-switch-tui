@@ -132,6 +132,18 @@ impl ProviderAddFormState {
                     } else {
                         existing_config.to_string()
                     };
+                    let auto_compact = crate::cli::tui::form::parse_token_count(
+                        self.codex_auto_compact_token_limit.value.trim(),
+                    )
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0);
+                    let context_window = crate::cli::tui::form::parse_token_count(
+                        self.codex_context_window.value.trim(),
+                    )
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0);
                     let config_toml = update_codex_config_snippet(
                         &base_config,
                         base_url,
@@ -139,6 +151,8 @@ impl ProviderAddFormState {
                         self.codex_wire_api,
                         self.codex_requires_openai_auth,
                         self.codex_env_key.value.trim(),
+                        auto_compact,
+                        context_window,
                     );
                     set_codex_config_snapshot(settings_obj, &config_toml);
 
