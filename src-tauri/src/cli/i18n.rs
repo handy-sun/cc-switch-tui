@@ -6985,6 +6985,38 @@ pub mod texts {
         }
     }
 
+    pub fn codex_auto_compact_token_limit_invalid() -> &'static str {
+        if is_chinese() {
+            "自动压缩阈值必须为正整数且不超过 1 亿"
+        } else {
+            "Auto compact token limit must be a positive integer not exceeding 100 million"
+        }
+    }
+
+    pub fn codex_context_window_invalid() -> &'static str {
+        if is_chinese() {
+            "上下文窗口必须为正整数且不超过 1 亿"
+        } else {
+            "Context window must be a positive integer not exceeding 100 million"
+        }
+    }
+
+    pub fn codex_token_count_exceeds_max() -> &'static str {
+        if is_chinese() {
+            "数值不能超过 1 亿"
+        } else {
+            "Value must not exceed 100 million"
+        }
+    }
+
+    pub fn codex_auto_compact_exceeds_context_window() -> &'static str {
+        if is_chinese() {
+            "自动压缩阈值不能大于上下文窗口"
+        } else {
+            "Auto compact token limit must not exceed context window"
+        }
+    }
+
     pub fn base_url_placeholder() -> &'static str {
         if is_chinese() {
             "如 https://api.anthropic.com"
