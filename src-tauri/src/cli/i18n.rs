@@ -631,19 +631,21 @@ pub mod texts {
         "JSON"
     }
 
-    pub fn tui_editor_hint_view() -> &'static str {
+    pub fn tui_editor_hint_view() -> String {
+        let s = crate::settings::get_save_shortcut();
         if is_chinese() {
-            "Enter 编辑  ↑↓ 滚动  Ctrl+S 保存  Esc 返回"
+            format!("Enter 编辑  ↑↓ 滚动  {s} 保存  Esc 返回")
         } else {
-            "Enter edit  ↑↓ scroll  Ctrl+S save  Esc back"
+            format!("Enter edit  ↑↓ scroll  {s} save  Esc back")
         }
     }
 
-    pub fn tui_editor_hint_edit() -> &'static str {
+    pub fn tui_editor_hint_edit() -> String {
+        let s = crate::settings::get_save_shortcut();
         if is_chinese() {
-            "编辑中：Esc 退出编辑  Ctrl+S 保存"
+            format!("编辑中：Esc 退出编辑  {s} 保存")
         } else {
-            "Editing: Esc stop editing  Ctrl+S save"
+            format!("Editing: Esc stop editing  {s} save")
         }
     }
 

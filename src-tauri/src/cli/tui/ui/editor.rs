@@ -20,10 +20,11 @@ pub(super) fn render_editor(
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
+    let save_label = crate::settings::get_save_shortcut();
     let keys = vec![
         ("↑↓←→", texts::tui_key_move()),
         ("Ctrl+O", texts::tui_key_external_editor()),
-        ("Ctrl+S", texts::tui_key_save()),
+        (save_label.as_str(), texts::tui_key_save()),
         ("Esc", texts::tui_key_close()),
     ];
     render_key_bar(frame, chunks[0], theme, &keys);

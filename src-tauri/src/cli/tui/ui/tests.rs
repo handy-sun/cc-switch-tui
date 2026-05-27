@@ -4046,7 +4046,7 @@ fn openclaw_env_editor_keeps_ctrl_s_save_hint() {
 
     let all = all_text(&render(&app, &minimal_data(&app.app_type)));
 
-    assert!(all.contains("Ctrl+S"), "{all}");
+    assert!(all.contains(crate::settings::get_save_shortcut().as_str()), "{all}");
     assert!(all.contains(texts::tui_key_save()), "{all}");
 }
 

@@ -280,9 +280,10 @@ fn mcp_add_form_key_items(
     editing: bool,
     selected_field: Option<McpAddField>,
 ) -> Vec<(&'static str, &'static str)> {
+    let save_label: &'static str = Box::leak(crate::settings::get_save_shortcut().into_boxed_str());
     let mut keys = vec![
         ("Tab", texts::tui_key_focus()),
-        ("Ctrl+S", texts::tui_key_save()),
+        (save_label, texts::tui_key_save()),
         ("Esc", texts::tui_key_close()),
     ];
 
