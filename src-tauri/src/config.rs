@@ -97,7 +97,7 @@ fn migrate_legacy_config_dir_once() {
 
 /// If `path` starts with `~` / `~/`, replace the tilde with the home directory.
 /// Otherwise return the path unchanged.
-fn expand_tilde(path: PathBuf) -> PathBuf {
+pub(crate) fn expand_tilde(path: PathBuf) -> PathBuf {
     let lossy = path.to_string_lossy();
     if lossy == "~" {
         return home_dir().unwrap_or(path);

@@ -6,7 +6,7 @@ use crate::config::get_claude_settings_path;
 use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
 use crate::opencode_config::get_opencode_dir;
-use crate::settings::{get_hermes_override_dir, get_openclaw_override_dir};
+use crate::settings::get_openclaw_override_dir;
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
@@ -16,7 +16,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => get_gemini_dir(),
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_override_dir().unwrap_or_else(default_openclaw_dir),
-        AppType::Hermes => get_hermes_override_dir().unwrap_or_else(default_hermes_dir),
+        AppType::Hermes => crate::hermes_config::get_hermes_dir(),
     };
 
     let filename = match app {
@@ -35,12 +35,6 @@ fn default_openclaw_dir() -> PathBuf {
     crate::config::home_dir()
         .map(|home| home.join(".openclaw"))
         .unwrap_or_else(|| PathBuf::from(".openclaw"))
-}
-
-fn default_hermes_dir() -> PathBuf {
-    crate::config::home_dir()
-        .map(|home| home.join(".hermes"))
-        .unwrap_or_else(|| PathBuf::from(".hermes"))
 }
 
 fn get_base_dir_with_fallback(

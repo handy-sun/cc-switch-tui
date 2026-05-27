@@ -46,9 +46,15 @@ use std::sync::{Mutex, OnceLock};
 
 /// 获取 Hermes 配置目录
 ///
-/// 默认路径: `~/.hermes/`
-/// 可通过 settings.hermes_config_dir 覆盖
+/// Priority: `HERMES_HOME` env var > cc-switch settings override > `$HOME/.hermes`
 pub fn get_hermes_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("HERMES_HOME") {
+        let dir = PathBuf::from(dir);
+        if !dir.as_os_str().is_empty() && !dir.to_string_lossy().trim().is_empty() {
+            return crate::config::expand_tilde(dir);
+        }
+    }
+
     if let Some(override_dir) = get_hermes_override_dir() {
         return override_dir;
     }
