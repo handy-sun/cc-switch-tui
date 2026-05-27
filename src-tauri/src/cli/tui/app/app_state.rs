@@ -221,6 +221,9 @@ pub enum Action {
     SetVisibleApps {
         apps: crate::settings::VisibleApps,
     },
+    SetSaveShortcut {
+        shortcut: Option<String>,
+    },
 
     CheckUpdate,
     ConfirmUpdate,
@@ -377,18 +380,20 @@ pub enum SettingsItem {
     SkillSyncMethod,
     SkipClaudeOnboarding,
     ClaudePluginIntegration,
+    SaveShortcut,
     Proxy,
     CheckForUpdates,
 }
 
 impl SettingsItem {
-    pub const ALL: [SettingsItem; 8] = [
+    pub const ALL: [SettingsItem; 9] = [
         SettingsItem::Language,
         SettingsItem::VisibleApps,
         SettingsItem::OpenClawConfigDir,
         SettingsItem::SkillSyncMethod,
         SettingsItem::SkipClaudeOnboarding,
         SettingsItem::ClaudePluginIntegration,
+        SettingsItem::SaveShortcut,
         SettingsItem::Proxy,
         SettingsItem::CheckForUpdates,
     ];

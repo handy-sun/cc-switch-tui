@@ -354,6 +354,9 @@ pub struct AppSettings {
     /// Codex 自定义端点列表
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints_codex: HashMap<String, CustomEndpoint>,
+    /// 保存快捷键（如 "Ctrl+S"、"F2"），None 表示使用默认 Ctrl+S
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub save_shortcut: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -392,6 +395,7 @@ impl Default for AppSettings {
             backup_retain_count: None,
             custom_endpoints_claude: HashMap::new(),
             custom_endpoints_codex: HashMap::new(),
+            save_shortcut: None,
         }
     }
 }
@@ -739,6 +743,12 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
         webdav.status = status;
     }
     update_settings(settings)
+}
+
+pub fn get_save_shortcut() -> String {
+    get_settings()
+        .save_shortcut
+        .unwrap_or_else(|| "Ctrl+S".to_string())
 }
 
 pub fn webdav_jianguoyun_preset(username: &str, password: &str) -> WebDavSyncSettings {

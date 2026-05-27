@@ -94,6 +94,7 @@ pub enum TextSubmit {
     SettingsProxyListenAddress,
     SettingsProxyListenPort,
     SettingsOpenClawConfigDir,
+    SettingsSaveShortcut,
     SkillsDiscoverQuery,
     SkillsRepoAdd,
     OpenClawDailyMemoryFilename,

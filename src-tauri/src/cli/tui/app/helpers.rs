@@ -1262,11 +1262,85 @@ pub(crate) fn openclaw_tools_profile_picker_label(index: usize) -> &'static str 
     }
 }
 
+/// 解析快捷键字符串为 (KeyModifiers, KeyCode)，如 "Ctrl+S"、"F2"、"Ctrl+Shift+S"
+pub(crate) fn parse_shortcut(s: &str) -> Option<(KeyModifiers, KeyCode)> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = s.split('+').map(|p| p.trim()).collect();
+    let mut modifiers = KeyModifiers::NONE;
+    let key_part;
+    if parts.len() > 1 {
+        key_part = parts.last()?;
+        for &part in &parts[..parts.len() - 1] {
+            match part.to_ascii_lowercase().as_str() {
+                "ctrl" => modifiers |= KeyModifiers::CONTROL,
+                "alt" => modifiers |= KeyModifiers::ALT,
+                "shift" => modifiers |= KeyModifiers::SHIFT,
+                _ => return None,
+            }
+        }
+    } else {
+        key_part = parts.first()?;
+    }
+    let code = match key_part.to_ascii_lowercase().as_str() {
+        "enter" => KeyCode::Enter,
+        "tab" => KeyCode::Tab,
+        "esc" | "escape" => KeyCode::Esc,
+        "space" => KeyCode::Char(' '),
+        "backspace" => KeyCode::Backspace,
+        "delete" | "del" => KeyCode::Delete,
+        "up" => KeyCode::Up,
+        "down" => KeyCode::Down,
+        "left" => KeyCode::Left,
+        "right" => KeyCode::Right,
+        "home" => KeyCode::Home,
+        "end" => KeyCode::End,
+        "pageup" | "pgup" => KeyCode::PageUp,
+        "pagedown" | "pgdn" => KeyCode::PageDown,
+        "insert" | "ins" => KeyCode::Insert,
+        s if s.len() > 1 && s.starts_with('f') => {
+            let n: u8 = s[1..].parse().ok()?;
+            if (1..=12).contains(&n) {
+                KeyCode::F(n)
+            } else {
+                return None;
+            }
+        }
+        s if s.len() == 1 => {
+            let c = s.chars().next()?;
+            // 存储为小写，匹配时不区分大小写
+            KeyCode::Char(c.to_ascii_lowercase())
+        }
+        _ => return None,
+    };
+    Some((modifiers, code))
+}
+
+/// 按键是否匹配已解析的快捷键
+pub(crate) fn key_matches_shortcut(key: KeyEvent, modifiers: KeyModifiers, code: KeyCode) -> bool {
+    // 特殊兼容：DC3 原始字符 (\u{13}) 匹配 Ctrl+S
+    if key.code == KeyCode::Char('\u{13}') && modifiers == KeyModifiers::CONTROL && code == KeyCode::Char('s')
+    {
+        return true;
+    }
+    let code_match = match (key.code, code) {
+        (KeyCode::Char(a), KeyCode::Char(b)) => a.to_ascii_lowercase() == b.to_ascii_lowercase(),
+        _ => key.code == code,
+    };
+    // contains 而非 ==，允许额外修饰键（如 Ctrl+Shift+S 匹配 Ctrl+S）
+    code_match && key.modifiers.contains(modifiers)
+}
+
 pub(crate) fn is_save_shortcut(key: KeyEvent) -> bool {
-    match key.code {
-        KeyCode::Char('s' | 'S') => key.modifiers.contains(KeyModifiers::CONTROL),
-        KeyCode::Char('\u{13}') => true,
-        _ => false,
+    let shortcut_str = crate::settings::get_save_shortcut();
+    if let Some((modifiers, code)) = parse_shortcut(&shortcut_str) {
+        key_matches_shortcut(key, modifiers, code)
+    } else {
+        // 解析失败时回退到默认 Ctrl+S
+        matches!(key.code, KeyCode::Char('s' | 'S')) && key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.code == KeyCode::Char('\u{13}')
     }
 }
 

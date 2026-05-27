@@ -2381,6 +2381,10 @@ pub(super) fn render_settings(
                     texts::disabled().to_string()
                 },
             ),
+            super::app::SettingsItem::SaveShortcut => (
+                texts::tui_settings_save_shortcut_label().to_string(),
+                crate::settings::get_save_shortcut(),
+            ),
             super::app::SettingsItem::Proxy => (
                 texts::tui_config_item_proxy().to_string(),
                 format!(

@@ -763,6 +763,17 @@ impl App {
                     });
                     Action::None
                 }
+                Some(SettingsItem::SaveShortcut) => {
+                    let buffer = crate::settings::get_save_shortcut();
+                    self.overlay = Overlay::TextInput(TextInputState {
+                        title: texts::tui_settings_save_shortcut_label().to_string(),
+                        prompt: texts::tui_settings_save_shortcut_prompt().to_string(),
+                        input: TextInput::new(buffer),
+                        submit: TextSubmit::SettingsSaveShortcut,
+                        secret: false,
+                    });
+                    Action::None
+                }
                 Some(SettingsItem::Proxy) => self.push_route_and_switch(Route::SettingsProxy),
                 Some(SettingsItem::CheckForUpdates) => Action::CheckUpdate,
                 None => Action::None,

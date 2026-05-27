@@ -2944,6 +2944,38 @@ pub mod texts {
         "Default (~/.openclaw)"
     }
 
+    pub fn tui_settings_save_shortcut_label() -> &'static str {
+        if is_chinese() {
+            "保存快捷键"
+        } else {
+            "Save Shortcut"
+        }
+    }
+
+    pub fn tui_settings_save_shortcut_prompt() -> &'static str {
+        if is_chinese() {
+            "输入快捷键组合（如 Ctrl+S、F2、Ctrl+Shift+S）"
+        } else {
+            "Enter key combo (e.g. Ctrl+S, F2, Ctrl+Shift+S)"
+        }
+    }
+
+    pub fn tui_settings_save_shortcut_saved() -> &'static str {
+        if is_chinese() {
+            "保存快捷键已更新"
+        } else {
+            "Save shortcut updated"
+        }
+    }
+
+    pub fn tui_settings_save_shortcut_invalid() -> &'static str {
+        if is_chinese() {
+            "无效的快捷键格式"
+        } else {
+            "Invalid shortcut format"
+        }
+    }
+
     pub fn tui_settings_proxy_restart_hint() -> &'static str {
         if is_chinese() {
             "修改监听地址或端口后，需先停止并重新开启本地代理才能生效"

@@ -348,6 +348,14 @@ pub(crate) fn handle_action(
             Ok(())
         }
         Action::SetVisibleApps { apps } => settings::set_visible_apps(&mut ctx, apps),
+        Action::SetSaveShortcut { shortcut } => {
+            let mut settings = crate::settings::get_settings();
+            settings.save_shortcut = shortcut;
+            crate::settings::update_settings(settings)?;
+            ctx.app
+                .push_toast(texts::tui_settings_save_shortcut_saved(), ToastKind::Success);
+            Ok(())
+        }
         Action::CheckUpdate => updates::check(&mut ctx),
         Action::ConfirmUpdate => updates::confirm(&mut ctx),
         Action::CancelUpdate => {
