@@ -1315,13 +1315,26 @@ pub(crate) fn parse_shortcut(s: &str) -> Option<(KeyModifiers, KeyCode)> {
         }
         _ => return None,
     };
+    // crossterm 规范化：Ctrl+字母时 Shift 被吸收进大写字符（Ctrl+Shift+S → CONTROL + Char('S')）
+    // 因此解析 Ctrl+Shift+字母 时去掉 SHIFT，将字符转为大写以匹配终端实际上报的 KeyEvent
+    if modifiers.contains(KeyModifiers::CONTROL)
+        && modifiers.contains(KeyModifiers::SHIFT)
+        && matches!(code, KeyCode::Char(c) if c.is_ascii_lowercase())
+    {
+        modifiers.remove(KeyModifiers::SHIFT);
+        if let KeyCode::Char(c) = code {
+            return Some((modifiers, KeyCode::Char(c.to_ascii_uppercase())));
+        }
+    }
     Some((modifiers, code))
 }
 
 /// 按键是否匹配已解析的快捷键
 pub(crate) fn key_matches_shortcut(key: KeyEvent, modifiers: KeyModifiers, code: KeyCode) -> bool {
     // 特殊兼容：DC3 原始字符 (\u{13}) 匹配 Ctrl+S
-    if key.code == KeyCode::Char('\u{13}') && modifiers == KeyModifiers::CONTROL && code == KeyCode::Char('s')
+    if key.code == KeyCode::Char('\u{13}')
+        && modifiers == KeyModifiers::CONTROL
+        && matches!(code, KeyCode::Char('s' | 'S'))
     {
         return true;
     }
