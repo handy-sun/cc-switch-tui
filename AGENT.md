@@ -1,4 +1,4 @@
-1|# Hermes Agent 支持计划 - cc-switch-tui
+1|# Hermes Agent 支持 - cc-switch-tui
 
 ## 背景
 
@@ -7,20 +7,10 @@
 | 项目 | 定位 | Hermes 支持 | 设置同步 |
 |---|---|---|---|
 | cc-switch | Tauri 桌面 GUI (v3.14.1) | 完整一等公民支持 | WebDAV 云同步 |
-| cc-switch-tui | TUI 管理器 (v0.0.1) | 一等公民支持 | WebDAV 云同步 |
+| cc-switch-tui | TUI 管理器 (v0.2.0) | ✅ 完整一等公民支持 | WebDAV 云同步 |
 | cc-switch-web | Web 版 (v0.10.2-1) | 完全没有 | 无 |
 
-用户在无桌面的 Linux 环境下使用，需要在 CLI 端添加 Hermes Agent 的完整支持（包括设置同步功能）。
-
-## 决策：加在 CLI 端
-
-理由：
-
-1. **WebDAV 云同步已就绪** — CLI 已有完整的 WebDAV 基础设施（上传/下载/自动同步/坚果云预设），Web 端完全没有
-2. **数据层已有 30-40% 基础** — `enabled_hermes` 数据库列、`McpApps.hermes` 字段已存在，只需补齐逻辑
-3. **与桌面版数据兼容** — CLI 使用 SQLite + WebDAV 协议与桌面版一致，同步数据可无缝互通
-4. **桌面版代码可大量复用** — `hermes_config.rs`（1947行）和 `mcp/hermes.rs`（574行）可直接移植，同为 Rust 后端
-5. **TUI 足够应对无桌面场景** — 交互式终端界面，SSH 中也能用
+Hermes Agent 支持已在 CLI 端完整实现，包括设置同步功能。
 
 ## Hermes Agent 配置结构
 
@@ -58,53 +48,60 @@ mcp_servers:
 - Memory 文件：`~/.hermes/memories/MEMORY.md` 和 `~/.hermes/memories/USER.md`
 - Web UI：`http://127.0.0.1:9119`，或 `hermes dashboard` 命令
 
-## 实现计划
+## 实现状态
 
-### Tier 1: 核心 AppType 添加（必做）
+所有 Tier 均已完成，Hermes 已作为一等公民支持集成。
 
-| 变更 | 文件 | 工作量 |
+### Tier 1: 核心 AppType 添加 ✅
+
+| 变更 | 文件 | 状态 |
 |---|---|---|
-| 添加 `AppType::Hermes` 枚举变体 | `app_config.rs` | 小 |
-| 添加 Hermes match 臂（as_str, is_additive_mode, all, FromStr） | `app_config.rs` | 小 |
-| `McpApps::is_enabled_for/set_enabled_for/enabled_apps` 补 Hermes 臂 | `app_config.rs` | 小 |
-| `SkillApps` 添加 `hermes` 字段 + 方法臂 | `app_config.rs` | 小 |
-| `VisibleApps` 添加 `hermes` 字段 + `app_order()` 更新 | `settings.rs` | 小 |
-| `AppSettings` 添加 `hermes_config_dir` + `current_provider_hermes` | `settings.rs` | 中 |
-| `CommonConfigSnippets` 添加 `hermes` 字段 | `app_config.rs` | 小 |
-| `PromptRoot` 添加 `hermes` 字段 | `app_config.rs` | 小 |
-| `MultiAppConfig::default()` 插入 hermes app | `app_config.rs` | 小 |
-| `sync_policy::should_sync_live()` 补 Hermes 臂 | `sync_policy.rs` | 小 |
-| `prompt_file_path()` 补 Hermes 臂 | `prompt_files.rs` | 小 |
+| `AppType::Hermes` 枚举变体 | `app_config.rs` | ✅ |
+| Hermes match 臂（as_str, is_additive_mode, all, FromStr） | `app_config.rs` | ✅ |
+| `McpApps::is_enabled_for/set_enabled_for/enabled_apps` 补 Hermes 臂 | `app_config.rs` | ✅ |
+| `SkillApps` 添加 `hermes` 字段 + 方法臂 | `app_config.rs` | ✅ |
+| `VisibleApps` 添加 `hermes` 字段 + `app_order()` 更新 | `settings.rs` | ✅ |
+| `CommonConfigSnippets` 添加 `hermes` 字段 | `app_config.rs` | ✅ |
+| `PromptRoot` 添加 `hermes` 字段 | `app_config.rs` | ✅ |
+| `sync_policy::should_sync_live()` 补 Hermes 臂 | `sync_policy.rs` | ✅ |
+| `prompt_file_path()` 补 Hermes 臂 | `prompt_files.rs` | ✅ |
 
-### Tier 2: Hermes 配置模块（核心工作，可从桌面版移植）
+### Tier 2: Hermes 配置模块 ✅
 
-| 变更 | 文件 | 工作量 |
+| 变更 | 文件 | 状态 |
 |---|---|---|
-| 新建 `hermes_config.rs` — 配置目录/路径/读写函数 | 新文件，从桌面版移植（1947行） | 大 |
-| 新建 `mcp/hermes.rs` — MCP 格式转换与同步 | 新文件，从桌面版移植（574行） | 中 |
-| `ProviderService::write_live_snapshot()` 补 Hermes 臂 | `services/provider/mod.rs` | 大 |
-| `ProviderService::refresh_provider_snapshot()` 补 Hermes 臂 | `services/provider/mod.rs` | 中 |
-| `ProviderService::import_default_config()` 补 Hermes 臂 | `services/provider/mod.rs` | 中 |
-| `ProviderService::read_live_settings()` 补 Hermes 臂 | `services/provider/mod.rs` | 中 |
-| `McpService::sync_server_to_app_internal()` 补 Hermes | `services/mcp.rs` | 小 |
-| `McpService::remove_server_from_app()` 补 Hermes | `services/mcp.rs` | 小 |
-| `import_from_hermes()` 导入函数 | `mcp.rs` | 中 |
+| `hermes_config.rs` — 配置目录/路径/读写函数 | `hermes_config.rs`（2048行） | ✅ |
+| MCP 格式转换与同步 | `mcp.rs`（函数直接在此文件中） | ✅ |
+| `ProviderService::write_live_snapshot()` 补 Hermes 臂 | `services/provider/live.rs` | ✅ |
+| `ProviderService::import_default_config()` 补 Hermes 臂 | `services/provider/mod.rs` | ✅ |
+| `ProviderService::read_live_settings()` 补 Hermes 臂 | `services/provider/mod.rs` | ✅ |
+| `McpService::import_from_hermes()` | `services/mcp.rs` + `mcp.rs` | ✅ |
+| `sync_single_server_to_hermes()` | `mcp.rs` | ✅ |
+| `remove_server_from_hermes()` | `mcp.rs` | ✅ |
+| `import_from_hermes()` | `mcp.rs` | ✅ |
 
-### Tier 3: TUI 集成
+### Tier 3: TUI 集成 ✅
 
-| 变更 | 文件 | 工作量 |
+| 变更 | 文件 | 状态 |
 |---|---|---|
-| TUI app state / tab 切换添加 Hermes | `tui/app/app_state.rs` | 小 |
-| Hermes 路由和导航（如需自定义页面） | `tui/route.rs` | 可变 |
-| `cc-switch start hermes` 命令（可选） | `cli/commands/start.rs` | 中 |
+| TUI app state / tab 切换 | 多个文件 | ✅ |
+| Picker 架构（MCP/Skills/Visible） | `app_config.rs` | ✅ |
+| Theme 主题色 | `tui/theme.rs`（DRACULA_YELLOW） | ✅ |
+| MCP 表格显示 Hermes 列 | `tui/ui/mcp.rs` | ✅ |
+| Skills 表格显示 Hermes 列 | `tui/ui/skills/installed.rs` | ✅ |
+| Provider 表单支持 | `tui/form.rs`（AppHermes 字段） | ✅ |
+| `start hermes` 命令 | — | ⚠️ 不需要（additive mode） |
 
-### Tier 4: 数据库 / WebDAV
+> **注**: Hermes 使用 additive mode（`is_additive_mode() = true`），与 OpenCode/OpenClaw 一样，不需要 `start` 命令。
 
-| 变更 | 文件 | 工作量 |
+### Tier 4: 数据库 / WebDAV ✅
+
+| 变更 | 文件 | 状态 |
 |---|---|---|
-| 如需新 schema 变更，添加 v10→v11 迁移 | `schema.rs` | 小 |
-| WebDAV DB_COMPAT_VERSION 可能需 bump | `webdav_sync/mod.rs` | 小 |
-| 更新 `McpApps { ..., hermes: false }` 字面量 | `mcp.rs` 等 | 小 |
+| `enabled_hermes` 列（mcp_servers 表） | `database/schema.rs` | ✅ |
+| `enabled_hermes` 列（skills 表） | `database/schema.rs` | ✅ |
+| DAO 层支持 | `database/dao/mcp.rs`, `database/dao/skills.rs` | ✅ |
+| Schema 迁移 | `database/schema.rs` | ✅ |
 
 ## 桌面版可复用代码
 
@@ -170,12 +167,10 @@ mcp_servers:
 
 | Const | 用途 | 包含的 App |
 |---|---|---|
-| `MCP_PICKER_APPS` | MCP server toggle picker | Claude, Codex, Gemini, OpenCode, Hermes |
+| `MCP_PICKER_APPS` | MCP server toggle picker | Claude, Codex, Gemini, OpenCode, OpenClaw, Hermes |
 | `VISIBLE_PICKER_APPS` | Settings "Visible Apps" picker | 全部 6 个 |
-| `SKILLS_PICKER_APPS` | Skills app toggle picker | Claude, Codex, Gemini, OpenCode, Hermes |
+| `SKILLS_PICKER_APPS` | Skills app toggle picker | Claude, Codex, Gemini, OpenCode, OpenClaw, Hermes |
 
 Handler（`overlay_handlers/pickers.rs`）使用 `CONST.len() - 1` 作为导航上界，`CONST[*selected]` 做 index→AppType 映射。Render 函数（`ui/overlay/pickers.rs`）引用同一组 const。添加新 AppType 时只需更新 const 数组，无需修改 handler/render 逻辑。
 
 `AppType` 已 derive `Copy`，可按值使用。
-
-`four_app_picker_index()` 用于 MCP/Skills picker 初始光标定位，内部引用 `MCP_PICKER_APPS.len() - 1` 做 clamp。
