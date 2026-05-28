@@ -601,6 +601,42 @@ pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, App
         map.insert(name, entry);
     }
 
+    // If model: section references a provider not yet in the list, surface it
+    // so the UI always shows the active provider. Built-in providers (e.g.
+    // xiaomi, openai) are not in custom_providers or providers dict.
+    if let Some(model_section) = config.get("model").and_then(|v| v.as_mapping()) {
+        let provider_name = model_section
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(provider_name) = provider_name {
+            if !map.contains_key(provider_name) {
+                // Build a minimal provider entry from the model section
+                let mut entry = serde_json::Map::new();
+                entry.insert("name".to_string(), serde_json::json!(provider_name));
+                if let Some(base_url) = model_section.get("base_url").and_then(|v| v.as_str()) {
+                    entry.insert("base_url".to_string(), serde_json::json!(base_url));
+                }
+                if let Some(api_key) = model_section.get("api_key").and_then(|v| v.as_str()) {
+                    entry.insert("api_key".to_string(), serde_json::json!(api_key));
+                }
+                if let Some(default_model) = model_section.get("default").and_then(|v| v.as_str()) {
+                    entry.insert("default_model".to_string(), serde_json::json!(default_model));
+                    // Also add as a single-model entry for the UI
+                    let mut models = serde_json::Map::new();
+                    models.insert(default_model.to_string(), serde_json::json!({"name": default_model}));
+                    entry.insert("models".to_string(), serde_json::Value::Object(models));
+                }
+                entry.insert(
+                    PROVIDER_SOURCE_FIELD.to_string(),
+                    serde_json::json!("model_section"),
+                );
+                map.insert(provider_name.to_string(), serde_json::Value::Object(entry));
+            }
+        }
+    }
+
     Ok(map)
 }
 
