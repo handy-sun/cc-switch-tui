@@ -25,6 +25,7 @@ pub(super) enum LiveSnapshot {
     },
     OpenCode {
         config: Option<Value>,
+        auth: Option<Value>,
     },
     OpenClaw {
         config_source: Option<String>,
@@ -83,12 +84,19 @@ impl LiveSnapshot {
                     _ => {}
                 }
             }
-            LiveSnapshot::OpenCode { config } => {
+            LiveSnapshot::OpenCode { config, auth } => {
                 let path = crate::opencode_config::get_opencode_config_path();
                 if let Some(value) = config {
                     write_json_file(&path, value)?;
                 } else if path.exists() {
                     delete_file(&path)?;
+                }
+
+                let auth_path = crate::opencode_config::get_opencode_auth_path();
+                if let Some(value) = auth {
+                    crate::opencode_config::write_opencode_auth(value)?;
+                } else if auth_path.exists() {
+                    delete_file(&auth_path)?;
                 }
             }
             LiveSnapshot::OpenClaw { config_source } => {
@@ -168,7 +176,18 @@ pub(super) fn capture_live_snapshot(app_type: &AppType) -> Result<LiveSnapshot, 
             } else {
                 None
             };
-            Ok(LiveSnapshot::OpenCode { config })
+            let auth_path = crate::opencode_config::get_opencode_auth_path();
+            let auth = if auth_path.exists() {
+                let auth_map = crate::opencode_config::read_opencode_auth()?;
+                if auth_map.is_empty() {
+                    None
+                } else {
+                    Some(Value::Object(auth_map))
+                }
+            } else {
+                None
+            };
+            Ok(LiveSnapshot::OpenCode { config, auth })
         }
         AppType::OpenClaw => {
             let config_source = crate::openclaw_config::read_openclaw_config_source()?;
