@@ -2034,7 +2034,17 @@ impl ProviderService {
                     config_to_write.clone(),
                 ) {
                     Ok(config) => crate::opencode_config::set_typed_provider(&provider.id, &config),
-                    Err(_) => crate::opencode_config::set_provider(&provider.id, config_to_write),
+                    Err(_) => {
+                        // 尝试从原始 JSON 中提取 apiKey 同步到 auth.json
+                        let api_key = config_to_write
+                            .get("options")
+                            .and_then(|o| o.get("apiKey"))
+                            .and_then(|v| v.as_str());
+                        if let Some(key) = api_key {
+                            crate::opencode_config::sync_provider_auth(&provider.id, key)?;
+                        }
+                        crate::opencode_config::set_provider(&provider.id, config_to_write)
+                    }
                 }
             }
             AppType::OpenClaw => {
