@@ -1351,13 +1351,24 @@ impl ProviderService {
             )?;
 
             let should_write_live = if app_type_clone.is_additive_mode() {
-                let live_config_managed = Self::additive_provider_exists_in_live_config(
-                    &app_type_clone,
-                    &provider_id,
-                    Self::provider_live_config_managed(&merged).or(existing_live_config_managed),
-                )?;
-                Self::set_provider_live_config_managed(&mut merged, live_config_managed);
-                live_config_managed
+                if matches!(app_type_clone, AppType::Hermes) {
+                    // Hermes does not support "remove from live config" — every
+                    // provider is always backed by the YAML file.  Always write
+                    // so that edits (e.g. API key changes) are persisted to
+                    // config.yaml, even when live_config_managed metadata is
+                    // stale or absent.
+                    Self::set_provider_live_config_managed(&mut merged, true);
+                    true
+                } else {
+                    let live_config_managed = Self::additive_provider_exists_in_live_config(
+                        &app_type_clone,
+                        &provider_id,
+                        Self::provider_live_config_managed(&merged)
+                            .or(existing_live_config_managed),
+                    )?;
+                    Self::set_provider_live_config_managed(&mut merged, live_config_managed);
+                    live_config_managed
+                }
             } else {
                 effective_current_provider.as_deref() == Some(provider_id.as_str())
             };
