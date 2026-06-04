@@ -119,11 +119,8 @@ pub(crate) fn expand_tilde(path: PathBuf) -> PathBuf {
 ///
 /// Priority: `CLAUDE_CONFIG_DIR` env var > cc-switch settings override > `$HOME/.claude`
 pub fn get_claude_config_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
-        let dir = PathBuf::from(dir);
-        if !dir.as_os_str().is_empty() && !dir.to_string_lossy().trim().is_empty() {
-            return expand_tilde(dir);
-        }
+    if let Some(dir) = claude_config_dir_from_env() {
+        return dir;
     }
     if let Some(custom) = crate::settings::get_claude_override_dir() {
         return custom;
@@ -165,8 +162,22 @@ fn effective_app_config_dir_without_migration(home: &Path) -> Option<PathBuf> {
     Some(home.join(".cc-switch-tui"))
 }
 
+fn claude_config_dir_from_env() -> Option<PathBuf> {
+    let dir = std::env::var_os("CLAUDE_CONFIG_DIR")?;
+    let dir = PathBuf::from(dir);
+    if dir.as_os_str().is_empty() || dir.to_string_lossy().trim().is_empty() {
+        return None;
+    }
+    Some(expand_tilde(dir))
+}
+
 /// 获取 Claude MCP 配置文件路径，若设置了目录覆盖则与覆盖目录同级
 pub fn get_claude_mcp_path() -> PathBuf {
+    if let Some(env_dir) = claude_config_dir_from_env() {
+        if let Some(path) = derive_mcp_path_from_override(&env_dir) {
+            return path;
+        }
+    }
     if let Some(custom_dir) = crate::settings::get_claude_override_dir() {
         if let Some(path) = derive_mcp_path_from_override(&custom_dir) {
             return path;
@@ -550,6 +561,51 @@ mod tests {
         set_test_home_override(Some(Path::new("/tmp/claude-home")));
 
         assert_eq!(get_claude_config_dir(), PathBuf::from("/tmp/claude-custom"));
+
+        set_test_home_override(None);
+    }
+
+    #[test]
+    fn get_claude_mcp_path_respects_env_var() {
+        let _guard = lock_test_home_and_settings();
+        let _settings = SettingsGuard::with_claude_config_dir(Some("/tmp/settings-override"));
+        let _env = ConfigDirEnvGuard::new("CLAUDE_CONFIG_DIR", Some("/tmp/claude-custom"));
+        set_test_home_override(Some(Path::new("/tmp/claude-home")));
+
+        assert_eq!(
+            get_claude_mcp_path(),
+            PathBuf::from("/tmp").join("claude-custom.json")
+        );
+
+        set_test_home_override(None);
+    }
+
+    #[test]
+    fn get_claude_mcp_path_expands_tilde_in_env_var() {
+        let _guard = lock_test_home_and_settings();
+        let _settings = SettingsGuard::with_claude_config_dir(None);
+        let _env = ConfigDirEnvGuard::new("CLAUDE_CONFIG_DIR", Some("~/.claude-custom"));
+        set_test_home_override(Some(Path::new("/tmp/claude-home-tilde")));
+
+        assert_eq!(
+            get_claude_mcp_path(),
+            PathBuf::from("/tmp/claude-home-tilde").join(".claude-custom.json")
+        );
+
+        set_test_home_override(None);
+    }
+
+    #[test]
+    fn get_claude_mcp_path_blank_env_falls_back_to_settings() {
+        let _guard = lock_test_home_and_settings();
+        let _settings = SettingsGuard::with_claude_config_dir(Some("/tmp/settings-override"));
+        let _env = ConfigDirEnvGuard::new("CLAUDE_CONFIG_DIR", Some("   "));
+        set_test_home_override(Some(Path::new("/tmp/claude-home")));
+
+        assert_eq!(
+            get_claude_mcp_path(),
+            PathBuf::from("/tmp").join("settings-override.json")
+        );
 
         set_test_home_override(None);
     }

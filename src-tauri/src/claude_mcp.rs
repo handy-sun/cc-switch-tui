@@ -11,16 +11,15 @@ fn user_config_path() -> PathBuf {
 }
 
 fn ensure_mcp_override_migrated() {
-    if crate::settings::get_claude_override_dir().is_none() {
+    let new_path = get_claude_mcp_path();
+    let legacy_path = get_default_claude_mcp_path();
+    if new_path == legacy_path {
         return;
     }
-
-    let new_path = get_claude_mcp_path();
     if new_path.exists() {
         return;
     }
 
-    let legacy_path = get_default_claude_mcp_path();
     if !legacy_path.exists() {
         return;
     }

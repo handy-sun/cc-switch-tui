@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs};
+use std::{collections::HashMap, ffi::OsString, fs};
 
 use serde_json::json;
 
@@ -10,6 +10,28 @@ use cc_switch_lib::{
 #[path = "support.rs"]
 mod support;
 use support::{ensure_test_home, lock_test_mutex, reset_test_fs, state_from_config};
+
+struct EnvVarGuard {
+    key: &'static str,
+    old_value: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let old_value = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, old_value }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.old_value {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
 
 #[test]
 fn import_default_config_claude_persists_provider() {
@@ -792,6 +814,55 @@ command = "live-command"
             .and_then(|value| value.as_str()),
         Some("from-db")
     );
+}
+
+#[test]
+fn upsert_claude_mcp_respects_claude_config_dir_env() {
+    let _guard = lock_test_mutex();
+    reset_test_fs();
+    let home = ensure_test_home();
+    let claude_config_dir = home.join(".config").join("claude-env-home");
+    let _env = EnvVarGuard::set("CLAUDE_CONFIG_DIR", &claude_config_dir);
+    fs::create_dir_all(&claude_config_dir).expect("create CLAUDE_CONFIG_DIR");
+
+    let state = state_from_config(MultiAppConfig::default());
+    let server = McpServer {
+        id: "env_claude".to_string(),
+        name: "Env Claude".to_string(),
+        server: json!({
+            "type": "stdio",
+            "command": "echo"
+        }),
+        apps: McpApps {
+            claude: true,
+            codex: false,
+            gemini: false,
+            opencode: false,
+            openclaw: false,
+            hermes: false,
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: Vec::new(),
+    };
+
+    McpService::upsert_server(&state, server).expect("upsert Claude MCP server");
+
+    let expected_mcp_path = home.join(".config").join("claude-env-home.json");
+    assert_eq!(get_claude_mcp_path(), expected_mcp_path);
+    assert!(
+        expected_mcp_path.exists(),
+        "Claude MCP config should be written beside CLAUDE_CONFIG_DIR"
+    );
+    assert!(
+        !home.join(".claude.json").exists(),
+        "Claude MCP sync should not create ~/.claude.json when CLAUDE_CONFIG_DIR is set"
+    );
+
+    let text = fs::read_to_string(&expected_mcp_path).expect("read env Claude MCP config");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse env Claude MCP JSON");
+    assert_eq!(value["mcpServers"]["env_claude"]["command"], json!("echo"));
 }
 
 #[test]
