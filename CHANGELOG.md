@@ -7,6 +7,40 @@ All notable changes to CC Switch TUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-06-11
+
+### Added
+
+- **OpenCode / Provider Discovery**: Discover providers from `auth.json` alongside `opencode.json`,
+  so providers added through OpenCode's own auth flow are automatically available.
+- **TUI / Configurable Save Shortcut**: Make save shortcut configurable and display the configured
+  key in all UI hints and editor overlays.
+
+### Fixed
+
+- **Claude / MCP Sync**: Respect Claude config dir (`CLAUDE_CONFIG_DIR`) when syncing MCP servers,
+  so MCP sync works correctly with custom config paths.
+- **Hermes / Provider List**: Show built-in providers from model config in the provider list,
+  not just user-defined providers.
+- **Hermes / Provider Persistence**: Ensure provider edits are always persisted to `config.yaml`,
+  preventing silent data loss on config round-trips.
+- **Hermes / Config Directory**: Respect `HERMES_HOME` env var for config directory resolution.
+- **TUI / Shortcuts**: Normalize Ctrl+Shift+letter shortcuts for crossterm compatibility,
+  fixing key handling on terminals that encode these as escape sequences.
+
+### Commits (since v0.2.0)
+
+- ff9a06e fix: respect Claude config dir for MCP sync
+- 5aa71d3 fix(hermes): show built-in providers from model config in provider list
+- b500de7 docs: update AGENT.md to reflect Hermes implementation status
+- f0a5f1e Merge pull request #7 from handy-sun/feat/opencode-auth-discovery
+- cbbef30 feat(opencode): discover providers from auth.json alongside opencode.json
+- ca77512 fix(hermes): ensure provider edits are always persisted to config.yaml
+- 3438432 fix(tui): normalize Ctrl+Shift+letter shortcuts for crossterm compatibility
+- caf14dc feat(tui): display configurable save shortcut in all UI hints
+- 426ee3e feat(settings): make save shortcut configurable
+- 90a1c9d fix(hermes): respect HERMES_HOME env var for config directory resolution
+
 ## [Unreleased]
 
 ### Changed
