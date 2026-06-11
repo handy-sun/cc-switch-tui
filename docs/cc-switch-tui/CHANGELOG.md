@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.1] - 2026-06-11
+
+### Added
+
+- OpenCode provider discovery from `auth.json` alongside `opencode.json`.
+- Configurable save shortcut with UI hint display.
+
+### Fixed
+
+- Respect Claude config dir for MCP sync.
+- Show built-in Hermes providers from model config in provider list.
+- Ensure Hermes provider edits are always persisted to `config.yaml`.
+- Respect `HERMES_HOME` env var for Hermes config directory resolution.
+- Normalize Ctrl+Shift+letter shortcuts for crossterm compatibility.
+
 ## [0.1.4] - 2026-05-21
 
 ### Added
@@ -104,6 +119,7 @@ Initial release of the renamed cc-switch-tui fork.
 
 - Sponsor section from README files and partner assets
 
+[0.2.1]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.2.1
 [0.1.4]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.4
 [0.1.3]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.3
 [0.1.2]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.2

@@ -7,7 +7,7 @@
 | 项目 | 定位 | Hermes 支持 | 设置同步 |
 |---|---|---|---|
 | cc-switch | Tauri 桌面 GUI (v3.14.1) | 完整一等公民支持 | WebDAV 云同步 |
-| cc-switch-tui | TUI 管理器 (v0.2.0) | ✅ 完整一等公民支持 | WebDAV 云同步 |
+| cc-switch-tui | TUI 管理器 (v0.2.1) | ✅ 完整一等公民支持 | WebDAV 云同步 |
 | cc-switch-web | Web 版 (v0.10.2-1) | 完全没有 | 无 |
 
 Hermes Agent 支持已在 CLI 端完整实现，包括设置同步功能。
