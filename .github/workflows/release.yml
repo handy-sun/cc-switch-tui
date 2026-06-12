@@ -206,6 +206,7 @@ jobs:
           set -euo pipefail
           status="$(
             curl -sS \
+              -H "User-Agent: cc-switch-tui-release/${GITHUB_REF_NAME} (https://github.com/handy-sun/cc-switch-tui)" \
               -o /tmp/cc-switch-tui-crate-version.json \
               -w "%{http_code}" \
               "https://crates.io/api/v1/crates/cc-switch-tui/${{ steps.crate-version.outputs.version }}"
