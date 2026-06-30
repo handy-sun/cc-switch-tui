@@ -1179,6 +1179,8 @@ fn mcp_add_form_builds_server_and_apps() {
     form.apps.claude = true;
     form.apps.codex = false;
     form.apps.gemini = true;
+    form.apps.openclaw = true;
+    form.apps.hermes = true;
 
     let server = form.to_mcp_server_json_value();
     assert_eq!(server["id"], "m1");
@@ -1190,6 +1192,30 @@ fn mcp_add_form_builds_server_and_apps() {
     assert_eq!(server["apps"]["codex"], false);
     assert_eq!(server["apps"]["gemini"], true);
     assert_eq!(server["apps"]["opencode"], false);
+    assert_eq!(server["apps"]["openclaw"], true);
+    assert_eq!(server["apps"]["hermes"], true);
+}
+
+/// Regression: toggling Hermes (or OpenClaw) in the MCP form must survive the
+/// serialize → deserialize round-trip used by the edit submit path. Previously
+/// `to_mcp_server_json_value` omitted the `openclaw`/`hermes` keys, so the
+/// `#[serde(default)]` on `McpApps` silently reset them to `false` on save.
+#[test]
+fn mcp_form_apps_survive_json_roundtrip() {
+    let mut form = McpAddFormState::new();
+    form.id.set("qt-rules");
+    form.name.set("qt-rules");
+    form.command.set("uvx");
+    form.args.set("qt-rules-mcp");
+    form.apps.hermes = true;
+    form.apps.openclaw = true;
+
+    let json = form.to_mcp_server_json_value();
+    let content = serde_json::to_string(&json).unwrap();
+    let server: crate::app_config::McpServer = serde_json::from_str(&content).unwrap();
+
+    assert!(server.apps.hermes, "hermes flag must survive save");
+    assert!(server.apps.openclaw, "openclaw flag must survive save");
 }
 
 #[test]

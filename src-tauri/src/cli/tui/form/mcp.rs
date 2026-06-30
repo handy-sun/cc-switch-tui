@@ -312,6 +312,8 @@ impl McpAddFormState {
                 "codex": self.apps.codex,
                 "gemini": self.apps.gemini,
                 "opencode": self.apps.opencode,
+                "openclaw": self.apps.openclaw,
+                "hermes": self.apps.hermes,
             }),
         );
 
