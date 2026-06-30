@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::super::app::{ConfirmAction, ConfirmOverlay, Overlay, ToastKind};
 use super::super::data::{load_state, UiData};
-use super::super::form::ProviderAddField;
+use super::super::form::{FormState, ProviderAddField};
 use super::super::runtime_systems::{next_model_fetch_request_id, ModelFetchReq, StreamCheckReq};
 use super::super::text_edit::TextInput;
 use super::RuntimeActionContext;
@@ -523,11 +523,22 @@ pub(super) fn model_fetch(
     };
     let request_id = next_model_fetch_request_id();
 
+    let current_value = if let Some(FormState::ProviderAdd(provider)) = ctx.app.form.as_ref() {
+        match claude_idx {
+            Some(idx) => provider.claude_model_input(idx),
+            None => provider.input(field.clone()),
+        }
+        .map(|input| input.value.clone())
+        .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     ctx.app.overlay = Overlay::ModelFetchPicker {
         request_id,
         field: field.clone(),
         claude_idx,
-        input: TextInput::new(""),
+        input: TextInput::new(current_value),
         query: String::new(),
         fetching: true,
         models: Vec::new(),

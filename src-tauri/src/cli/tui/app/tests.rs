@@ -10019,6 +10019,77 @@ mod tests {
     }
 
     #[test]
+    fn model_fetch_picker_enter_commits_highlighted_when_input_empty() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+
+        let data = UiData::default();
+        app.on_key(key(KeyCode::Char('a')), &data);
+        app.on_key(key(KeyCode::Enter), &data);
+
+        // 模拟「选中 Haiku 后按回车」拉取成功、用户未导航就直接回车的场景:
+        // input 为空,但列表首项处于高亮(selected_idx = 0)。
+        app.overlay = Overlay::ModelFetchPicker {
+            request_id: 1,
+            field: ProviderAddField::ClaudeModelConfig,
+            claude_idx: Some(2), // 2 = Haiku
+            input: TextInput::new(""),
+            query: String::new(),
+            fetching: false,
+            models: vec![
+                "claude-3-5-haiku-20241022".to_string(),
+                "claude-sonnet-4-6".to_string(),
+            ],
+            error: None,
+            selected_idx: 0,
+        };
+
+        app.on_key(key(KeyCode::Enter), &data);
+
+        let haiku = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form.claude_haiku_model.value.clone(),
+            other => panic!("expected ProviderAdd form, got: {other:?}"),
+        };
+        assert_eq!(haiku, "claude-3-5-haiku-20241022");
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn model_fetch_picker_enter_keeps_prefilled_value_when_list_empty() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+
+        let data = UiData::default();
+        app.on_key(key(KeyCode::Char('a')), &data);
+        app.on_key(key(KeyCode::Enter), &data);
+
+        // 第三方供应商无 /models 接口:列表为空,但 input 已被预填为当前 Haiku 值。
+        // 直接回车应保留该值并标记 touched,而非静默丢弃。
+        app.overlay = Overlay::ModelFetchPicker {
+            request_id: 1,
+            field: ProviderAddField::ClaudeModelConfig,
+            claude_idx: Some(2),
+            input: TextInput::new("my-haiku-model"),
+            query: String::new(),
+            fetching: false,
+            models: Vec::new(),
+            error: None,
+            selected_idx: 0,
+        };
+
+        app.on_key(key(KeyCode::Enter), &data);
+
+        let haiku = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form.claude_haiku_model.value.clone(),
+            other => panic!("expected ProviderAdd form, got: {other:?}"),
+        };
+        assert_eq!(haiku, "my-haiku-model");
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
     fn claude_model_overlay_esc_closes_without_exiting_parent_form() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Providers;
