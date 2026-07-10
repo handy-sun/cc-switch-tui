@@ -85,12 +85,18 @@ Codex live config 里的 `[model_providers.*]` 现在被视为两部分叠加结
 ## catalog 来源
 
 写回 live config 时，catalog 来源只取 cc-switch-tui 当前保存的 Codex provider。
+保存的自定义 provider 是托管 catalog 的权威来源：同步时会完整对账，而不是只覆盖同名项。
+因此，live config 中没有对应保存 provider 的非当前条目会被移除，避免历史快照中的
+`jdyun` 一类无主配置反复出现。
 
 过滤规则：
 
 - 官方 Codex provider 不参与 catalog 写回。
 - 没有可解析 `config` 的 provider 跳过。
 - 坏掉的旧 snapshot 不会中断整个写回流程，只会记录 warning 并跳过该项。
+
+当前 live `model_provider` 使用的 stable alias 只有在内容能匹配某个已保存 provider 时才会
+额外保留，确保 Codex resume/history 连续性不受 catalog 对账影响。
 
 这里专门做了容错，是因为历史数据库里可能存在不可解析的旧 Codex snapshot；如果因为
 一个坏快照就让“设置 common snippet”、“切换 provider”或“保存配置”全部失败，代价太大。
@@ -104,6 +110,10 @@ Codex live config 里的 `[model_providers.*]` 现在被视为两部分叠加结
 3. 如果 snapshot 只包含一个 `[model_providers.*]` 项，则回退到那个唯一 key
 
 只要拿到 key，就会把对应的 `[model_providers.<key>]` 整项写回 live config。
+
+provider snapshot 自身只保存顶层 `model_provider` 选中的那一个表。切换回填、切换后刷新和
+临时启动快照都会先隔离选中项，防止 live catalog 中其他 provider 被吸收到当前 provider
+的数据库快照里。
 
 ## 导入 live config
 
@@ -209,6 +219,17 @@ Codex provider 更新或删除时，需要处理旧 key 残留问题。
 
 这样能避免 live config 里一直残留已经失效的 `[model_providers.old_key]`。
 
+自定义 provider 重命名时，如果旧 key 原本由旧显示名生成，或表内 `name` 仍等于旧 key，
+会同时更新：
+
+- `meta.codexModelProviderKey`
+- 顶层 `model_provider`
+- `[model_providers.<key>]` 表名
+- provider 表内 `name`
+
+内部 provider id 不变。显式导入且已经与显示名解耦的外部 key 不会因修改显示标签而变化。
+重命名生成的 key 保留合法的 `-`，例如 `zhima-cx-pro`。
+
 ## 异常和回退
 
 ### 没有 catalog 时
@@ -232,7 +253,8 @@ catalog 写回会跳过坏掉的旧 provider snapshot，不阻塞其他正常 pr
 ## 维护约束
 
 - 这套逻辑是 Codex-only。不要把 `i` 的新行为直接扩散到其他 app。
-- `codexModelProviderKey` 是外部 key，不是内部主键；不要拿它替代 provider id。
+- `codexModelProviderKey` 是外部 key，不是内部主键；不要拿它替代 provider id。默认生成的
+  外部 key 可以随显示名重命名，但内部 id 必须保持稳定。
 - 导入动作不能自动写 current provider。
 - 如果以后再改 Codex stable provider alias 逻辑，必须同时检查 import 去重逻辑是否仍成立。
 - 如果以后允许非当前 provider 保存独立 auth，导入逻辑里“非当前 provider auth 为空”的约束也要一起重审。

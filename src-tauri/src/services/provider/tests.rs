@@ -4250,7 +4250,7 @@ fn codex_switch_syncs_all_managed_provider_catalog_entries_into_live_config() {
                 "p2".to_string(),
                 "Second".to_string(),
                 codex_settings(
-                    "model_provider = \"second\"\nmodel = \"gpt-4\"\n\n[model_providers.second]\nname = \"Second\"\nbase_url = \"https://api.two.example/v1\"\n",
+                    "model_provider = \"second\"\nmodel = \"gpt-4\"\n\n[model_providers.jdyun]\nname = \"jdyun\"\nbase_url = \"https://jd.example/v1\"\n\n[model_providers.second]\nname = \"Second\"\nbase_url = \"https://api.two.example/v1\"\n",
                 ),
                 None,
             ),
@@ -4280,6 +4280,216 @@ fn codex_switch_syncs_all_managed_provider_catalog_entries_into_live_config() {
         live_text.contains("[model_providers.second]"),
         "live config should expose the current provider catalog entry too: {live_text}"
     );
+    assert!(
+        !live_text.contains("[model_providers.jdyun]"),
+        "live config should remove catalog entries with no saved provider owner: {live_text}"
+    );
+}
+
+#[test]
+#[serial]
+fn codex_switch_isolates_saved_provider_snapshot_from_live_catalog() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+    std::fs::create_dir_all(crate::codex_config::get_codex_config_dir())
+        .expect("create ~/.codex (initialized)");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Codex);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "krill".to_string();
+        manager.providers.insert(
+            "krill".to_string(),
+            Provider::with_id(
+                "krill".to_string(),
+                "krill".to_string(),
+                codex_settings(
+                    "model_provider = \"krill\"\nmodel = \"gpt-5.4\"\n\n[model_providers.krill]\nname = \"krill\"\nbase_url = \"https://krill.example/v1\"\n",
+                ),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "zhima".to_string(),
+            Provider::with_id(
+                "zhima".to_string(),
+                "zhima-cx".to_string(),
+                codex_settings(
+                    "model_provider = \"zhima-cx\"\nmodel = \"gpt-5.4\"\n\n[model_providers.zhima-cx]\nname = \"zhima-cx\"\nbase_url = \"https://zhima.example/v1\"\n",
+                ),
+                None,
+            ),
+        );
+    }
+
+    std::fs::write(
+        get_codex_config_path(),
+        r#"model_provider = "krill"
+model = "gpt-5.4"
+
+[model_providers.jdyun]
+name = "jdyun"
+base_url = "https://jd.example/v1"
+
+[model_providers.krill]
+name = "krill"
+base_url = "https://krill.example/v1"
+"#,
+    )
+    .expect("seed polluted live config.toml");
+    write_json_file(
+        &get_codex_auth_path(),
+        &json!({ "OPENAI_API_KEY": "sk-krill" }),
+    )
+    .expect("write auth.json");
+
+    let state = state_from_config(config);
+    ProviderService::switch(&state, AppType::Codex, "zhima").expect("switch should succeed");
+
+    let krill = state
+        .db
+        .get_provider_by_id("krill", AppType::Codex.as_str())
+        .expect("read krill provider")
+        .expect("krill provider exists");
+    let stored = codex_config_text(&krill.settings_config);
+    assert!(stored.contains("[model_providers.krill]"));
+    assert!(
+        !stored.contains("[model_providers.jdyun]"),
+        "saved provider snapshots must not absorb unrelated live catalog entries: {stored}"
+    );
+}
+
+#[test]
+#[serial]
+fn update_codex_provider_reconciles_pending_display_name_rename() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+    std::fs::create_dir_all(crate::codex_config::get_codex_config_dir())
+        .expect("create ~/.codex (initialized)");
+
+    let provider_id = "0bd77868-43c1-456c-b718-ad4386253453";
+    let mut provider = Provider::with_id(
+        provider_id.to_string(),
+        "zhima-cx-pro".to_string(),
+        codex_settings(
+            "model_provider = \"zhima-cx\"\nmodel = \"gpt-5.4\"\n\n[model_providers.zhima-cx]\nname = \"zhima-cx\"\nbase_url = \"https://zhima.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+        ),
+        None,
+    );
+    provider
+        .meta
+        .get_or_insert_with(Default::default)
+        .codex_model_provider_key = Some("zhima-cx".to_string());
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Codex);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = provider_id.to_string();
+        manager
+            .providers
+            .insert(provider_id.to_string(), provider.clone());
+    }
+
+    std::fs::write(
+        get_codex_config_path(),
+        codex_config_text(&provider.settings_config),
+    )
+    .expect("seed live config.toml");
+    write_json_file(
+        &get_codex_auth_path(),
+        &json!({ "OPENAI_API_KEY": "sk-zhima" }),
+    )
+    .expect("write auth.json");
+
+    let state = state_from_config(config);
+    let mut updated = provider;
+    updated.notes = Some("saved after rename".to_string());
+    ProviderService::update(&state, AppType::Codex, updated).expect("update should succeed");
+
+    let saved = state
+        .db
+        .get_provider_by_id(provider_id, AppType::Codex.as_str())
+        .expect("read saved provider")
+        .expect("saved provider exists");
+    assert_eq!(
+        saved.id, provider_id,
+        "internal provider id must remain stable"
+    );
+    assert_eq!(
+        ProviderService::provider_codex_model_provider_key(&saved).as_deref(),
+        Some("zhima-cx-pro")
+    );
+    let stored = codex_config_text(&saved.settings_config);
+    assert!(stored.contains("model_provider = \"zhima-cx-pro\""));
+    assert!(stored.contains("[model_providers.zhima-cx-pro]"));
+    assert!(stored.contains("name = \"zhima-cx-pro\""));
+    assert!(!stored.contains("[model_providers.zhima-cx]"));
+
+    let live = std::fs::read_to_string(get_codex_config_path()).expect("read live config.toml");
+    assert!(live.contains("model_provider = \"zhima-cx-pro\""));
+    assert!(live.contains("[model_providers.zhima-cx-pro]"));
+    assert!(!live.contains("[model_providers.zhima-cx]"));
+}
+
+#[test]
+fn codex_provider_rename_preserves_explicitly_decoupled_external_key() {
+    let mut existing = Provider::with_id(
+        "vendor".to_string(),
+        "Friendly Old".to_string(),
+        codex_settings(
+            "model_provider = \"vendor-key\"\n\n[model_providers.vendor-key]\nname = \"Vendor API\"\nbase_url = \"https://vendor.example/v1\"\n",
+        ),
+        None,
+    );
+    existing
+        .meta
+        .get_or_insert_with(Default::default)
+        .codex_model_provider_key = Some("vendor-key".to_string());
+    let mut manager = crate::provider::ProviderManager::default();
+    manager
+        .providers
+        .insert(existing.id.clone(), existing.clone());
+
+    let mut updated = existing.clone();
+    updated.name = "Friendly New".to_string();
+    ProviderService::reconcile_codex_provider_name_key(&manager, &existing, &mut updated)
+        .expect("decoupled provider rename should remain valid");
+
+    assert_eq!(
+        ProviderService::provider_codex_model_provider_key(&updated).as_deref(),
+        Some("vendor-key")
+    );
+    assert!(codex_config_text(&updated.settings_config).contains("[model_providers.vendor-key]"));
+}
+
+#[test]
+fn codex_storage_normalization_isolates_selected_provider_table() {
+    let provider = Provider::with_id(
+        "zhima".to_string(),
+        "zhima-cx".to_string(),
+        codex_settings(
+            "model_provider = \"zhima-cx\"\n\n[model_providers.jdyun]\nname = \"jdyun\"\nbase_url = \"https://jd.example/v1\"\n\n[model_providers.zhima-cx]\nname = \"zhima-cx\"\nbase_url = \"https://zhima.example/v1\"\n",
+        ),
+        None,
+    );
+
+    let normalized = ProviderService::normalize_settings_config_for_storage(
+        &AppType::Codex,
+        &provider,
+        provider.settings_config.clone(),
+        None,
+    )
+    .expect("normalize Codex provider snapshot");
+    let stored = codex_config_text(&normalized);
+
+    assert!(stored.contains("[model_providers.zhima-cx]"));
+    assert!(!stored.contains("[model_providers.jdyun]"));
 }
 
 #[test]

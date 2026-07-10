@@ -1349,6 +1349,14 @@ impl ProviderService {
                 &mut merged,
                 common_config_snippet.as_deref(),
             )?;
+            if matches!(app_type_clone, AppType::Codex) {
+                let existing = manager
+                    .providers
+                    .get(&provider_id)
+                    .cloned()
+                    .ok_or_else(|| Self::app_not_found(&app_type_clone))?;
+                Self::reconcile_codex_provider_name_key(manager, &existing, &mut merged)?;
+            }
 
             let should_write_live = if app_type_clone.is_additive_mode() {
                 if matches!(app_type_clone, AppType::Hermes) {

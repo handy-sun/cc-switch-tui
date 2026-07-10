@@ -743,18 +743,9 @@ fn extract_api_url(settings_config: &Value, app_type: &AppType) -> Option<String
         AppType::Codex => {
             let config_str =
                 crate::codex_config::codex_config_text_from_settings(settings_config).ok()?;
-            for line in config_str.lines() {
-                let line = line.trim();
-                if line.starts_with("base_url") {
-                    if let Some(url_part) = line.split('=').nth(1) {
-                        let url = url_part.trim().trim_matches('"').trim_matches('\'');
-                        if !url.is_empty() {
-                            return Some(url.to_string());
-                        }
-                    }
-                }
-            }
-            None
+            crate::codex_config::selected_codex_provider_base_url(&config_str)
+                .ok()
+                .flatten()
         }
         AppType::Gemini => settings_config
             .get("env")
@@ -1522,6 +1513,28 @@ mod tests {
         assert_eq!(
             extract_api_url(&settings, &AppType::OpenCode),
             Some("https://opencode.example".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_api_url_codex_reads_selected_provider_table() {
+        let settings = json!({
+            "codex": {
+                "model_provider": "zhima-cx",
+                "model_providers": {
+                    "jdyun": {
+                        "base_url": "https://jd.example/v1"
+                    },
+                    "zhima-cx": {
+                        "base_url": "https://zhima.example/v1"
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            extract_api_url(&settings, &AppType::Codex).as_deref(),
+            Some("https://zhima.example/v1")
         );
     }
 
