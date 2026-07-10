@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.2] - 2026-07-10
+
+### Added
+
+- Structured Hermes multi-model editor for model IDs, context lengths, and output token limits.
+
+### Fixed
+
+- Persist Hermes model parameters with native `context_length` and `max_tokens` field names.
+- Migrate historical Hermes model dictionaries and legacy parameter aliases into the structured editor.
+- Preserve provider Headers and unknown provider/model fields while applying explicit field and model deletions.
+- Keep live Hermes top-level model defaults scoped to edits of the active provider.
+- Reconcile Codex provider catalog identity, renamed provider keys, active URLs, and stored snapshots.
+- Commit the highlighted fetched model when Enter is pressed with an empty picker input.
+- Preserve OpenClaw and Hermes MCP enablement flags when saving MCP forms.
+
 ## [0.2.1] - 2026-06-11
 
 ### Added
@@ -119,6 +135,7 @@ Initial release of the renamed cc-switch-tui fork.
 
 - Sponsor section from README files and partner assets
 
+[0.2.2]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.2.2
 [0.2.1]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.2.1
 [0.1.4]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.4
 [0.1.3]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.3
