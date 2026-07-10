@@ -1,4 +1,5 @@
 mod basic;
+mod hermes_models;
 mod layout;
 mod mcp_env;
 mod pickers;

@@ -168,6 +168,7 @@ pub enum ProviderAddField {
     OpenClawApiProtocol,
     OpenClawUserAgent,
     OpenClawModels,
+    HermesModels,
     OpenCodeNpmPackage,
     OpenCodeApiKey,
     OpenCodeBaseUrl,
@@ -259,6 +260,7 @@ pub struct ProviderAddFormState {
 
     pub openclaw_user_agent: bool,
     pub openclaw_models: Vec<Value>,
+    hermes_models_touched: bool,
     pub opencode_npm_package: TextInput,
     pub opencode_api_key: TextInput,
     pub opencode_base_url: TextInput,

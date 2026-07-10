@@ -2612,6 +2612,232 @@ fn provider_add_form_hermes_loads_normalized_api_aliases_when_editing() {
 }
 
 #[test]
+fn provider_add_form_hermes_uses_dedicated_model_field() {
+    let form = ProviderAddFormState::new(AppType::Hermes);
+    let fields = form.fields();
+
+    assert!(fields.contains(&ProviderAddField::HermesModels));
+    assert!(!fields.contains(&ProviderAddField::OpenClawModels));
+    assert!(!fields.contains(&ProviderAddField::OpenClawUserAgent));
+    assert!(!fields.contains(&ProviderAddField::OpenClawApiProtocol));
+}
+
+#[test]
+fn provider_edit_form_hermes_preserves_headers_and_uses_native_credentials() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({
+            "api_key": "sk-hermes",
+            "base_url": "https://api.hermes.example/v1",
+            "headers": { "User-Agent": "Hermes Web UI", "X-Trace": "1" }
+        }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    let settings = &form.to_provider_json_value()["settingsConfig"];
+
+    assert_eq!(settings["api_key"], "sk-hermes");
+    assert_eq!(settings["base_url"], "https://api.hermes.example/v1");
+    assert!(settings.get("apiKey").is_none());
+    assert!(settings.get("baseUrl").is_none());
+    assert_eq!(settings["headers"]["User-Agent"], "Hermes Web UI");
+    assert_eq!(settings["headers"]["X-Trace"], "1");
+}
+
+#[test]
+fn provider_edit_form_hermes_prefers_native_credentials_over_legacy_aliases() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({
+            "api_key": "sk-current",
+            "apiKey": "sk-stale",
+            "base_url": "https://current.example/v1",
+            "baseUrl": "https://stale.example/v1"
+        }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    let settings = &form.to_provider_json_value()["settingsConfig"];
+
+    assert_eq!(settings["api_key"], "sk-current");
+    assert_eq!(settings["base_url"], "https://current.example/v1");
+    assert!(settings.get("apiKey").is_none());
+    assert!(settings.get("baseUrl").is_none());
+}
+
+#[test]
+fn provider_add_form_hermes_model_upsert_preserves_unknown_fields() {
+    let mut form = ProviderAddFormState::new(AppType::Hermes);
+    form.openclaw_models = vec![json!({
+        "id": "old-model",
+        "context_length": 64000,
+        "max_tokens": 4096,
+        "reasoning_effort": "high"
+    })];
+
+    let selected = form
+        .upsert_hermes_model(
+            Some(0),
+            " new-model ".to_string(),
+            "128000".to_string(),
+            "8192".to_string(),
+        )
+        .expect("valid Hermes model should save");
+
+    assert_eq!(selected, 0);
+    assert_eq!(form.openclaw_models[0]["id"], "new-model");
+    assert_eq!(form.openclaw_models[0]["context_length"], 128000);
+    assert_eq!(form.openclaw_models[0]["max_tokens"], 8192);
+    assert_eq!(form.openclaw_models[0]["reasoning_effort"], "high");
+}
+
+#[test]
+fn provider_add_form_hermes_model_upsert_validates_inputs() {
+    let mut form = ProviderAddFormState::new(AppType::Hermes);
+    form.openclaw_models = vec![json!({ "id": "existing" })];
+
+    assert!(form
+        .upsert_hermes_model(None, " ".to_string(), "".to_string(), "".to_string())
+        .is_err());
+    assert!(form
+        .upsert_hermes_model(None, "existing".to_string(), "".to_string(), "".to_string(),)
+        .is_err());
+    assert!(form
+        .upsert_hermes_model(None, "new".to_string(), "0".to_string(), "4096".to_string(),)
+        .is_err());
+    assert!(form
+        .upsert_hermes_model(
+            None,
+            "new".to_string(),
+            "128000".to_string(),
+            "many".to_string(),
+        )
+        .is_err());
+}
+
+#[test]
+fn provider_edit_form_hermes_can_remove_all_models() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({
+            "models": [{ "id": "remove-me", "context_length": 128000 }]
+        }),
+        None,
+    );
+
+    let mut form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    assert!(form.remove_hermes_model(0));
+
+    let settings = &form.to_provider_json_value()["settingsConfig"];
+    assert_eq!(settings["models"], json!([]));
+}
+
+#[test]
+fn provider_edit_form_hermes_keeps_delete_intent_after_json_preview_apply() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({ "models": [{ "id": "remove-me" }] }),
+        None,
+    );
+    let mut form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    assert!(form.remove_hermes_model(0));
+    let preview = form.to_provider_json_value();
+
+    form.apply_provider_json_value_to_fields(preview)
+        .expect("reapply Hermes JSON preview");
+
+    assert_eq!(
+        form.to_provider_json_value()["settingsConfig"]["models"],
+        json!([])
+    );
+}
+
+#[test]
+fn provider_edit_form_hermes_treats_removed_json_models_key_as_delete() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({ "models": [{ "id": "remove-me" }] }),
+        None,
+    );
+    let mut form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    let mut edited = form.to_provider_json_value();
+    edited["settingsConfig"]
+        .as_object_mut()
+        .expect("settingsConfig object")
+        .remove("models");
+
+    form.apply_provider_json_value_to_fields(edited)
+        .expect("apply Hermes JSON without models key");
+
+    assert!(form.openclaw_models.is_empty());
+    assert_eq!(
+        form.to_provider_json_value()["settingsConfig"]["models"],
+        json!([])
+    );
+}
+
+#[test]
+fn provider_add_form_hermes_custom_reset_clears_model_edit_state() {
+    let mut form = ProviderAddFormState::new(AppType::Hermes);
+    form.upsert_hermes_model(
+        None,
+        "temporary".to_string(),
+        "128000".to_string(),
+        "8192".to_string(),
+    )
+    .expect("add temporary Hermes model");
+    assert!(form.has_unsaved_changes());
+
+    form.apply_template(0, &[]);
+
+    assert!(form.openclaw_models.is_empty());
+    assert!(!form.has_unsaved_changes());
+    assert!(form.to_provider_json_value()["settingsConfig"]
+        .get("models")
+        .is_none());
+}
+
+#[test]
+fn provider_edit_form_hermes_normalizes_model_parameters() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({
+            "api_key": "sk-hermes",
+            "base_url": "https://api.hermes.example/v1",
+            "models": [
+                {
+                    "id": "primary-model",
+                    "contextLength": 128000,
+                    "maxTokens": 8192,
+                    "reasoning_effort": "high"
+                }
+            ]
+        }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    let roundtrip = form.to_provider_json_value();
+    let model = &roundtrip["settingsConfig"]["models"][0];
+
+    assert_eq!(model["context_length"], 128000);
+    assert_eq!(model["max_tokens"], 8192);
+    assert_eq!(model["reasoning_effort"], "high");
+    assert!(model.get("contextLength").is_none());
+    assert!(model.get("contextWindow").is_none());
+    assert!(model.get("context_window").is_none());
+    assert!(model.get("maxTokens").is_none());
+}
+
+#[test]
 fn provider_add_form_openclaw_ignores_legacy_context_window_alias_when_loading() {
     let provider = Provider::with_id(
         "oclaw1".to_string(),

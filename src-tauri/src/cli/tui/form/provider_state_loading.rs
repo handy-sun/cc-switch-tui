@@ -3,6 +3,7 @@ use crate::provider::Provider;
 use serde_json::Value;
 
 use super::codex_config::parse_codex_config_snippet;
+use super::provider_json::normalize_hermes_model_fields;
 use super::{
     claude_hide_attribution_enabled, ClaudeApiFormat, ProviderAddFormState,
     OPENCLAW_DEFAULT_API_PROTOCOL,
@@ -209,6 +210,18 @@ fn populate_openclaw_form(form: &mut ProviderAddFormState, provider: &Provider) 
 
 fn populate_hermes_form(form: &mut ProviderAddFormState, provider: &Provider) {
     populate_openclaw_like_form(form, provider, true);
+    for model in &mut form.openclaw_models {
+        normalize_hermes_model_fields(model);
+    }
+    if let Some(context_length) = form
+        .openclaw_models
+        .first()
+        .and_then(|model| model.get("context_length"))
+        .and_then(Value::as_u64)
+    {
+        form.opencode_model_context_limit
+            .set(context_length.to_string());
+    }
 }
 
 fn populate_openclaw_like_form(
@@ -216,28 +229,26 @@ fn populate_openclaw_like_form(
     provider: &Provider,
     load_normalized_aliases: bool,
 ) {
-    if let Some(api_key) = provider
-        .settings_config
-        .get("apiKey")
-        .or_else(|| {
-            load_normalized_aliases
-                .then(|| provider.settings_config.get("api_key"))
-                .flatten()
-        })
-        .and_then(|value| value.as_str())
-    {
+    let api_key = if load_normalized_aliases {
+        provider
+            .settings_config
+            .get("api_key")
+            .or_else(|| provider.settings_config.get("apiKey"))
+    } else {
+        provider.settings_config.get("apiKey")
+    };
+    if let Some(api_key) = api_key.and_then(|value| value.as_str()) {
         form.opencode_api_key.set(api_key);
     }
-    if let Some(base_url) = provider
-        .settings_config
-        .get("baseUrl")
-        .or_else(|| {
-            load_normalized_aliases
-                .then(|| provider.settings_config.get("base_url"))
-                .flatten()
-        })
-        .and_then(|value| value.as_str())
-    {
+    let base_url = if load_normalized_aliases {
+        provider
+            .settings_config
+            .get("base_url")
+            .or_else(|| provider.settings_config.get("baseUrl"))
+    } else {
+        provider.settings_config.get("baseUrl")
+    };
+    if let Some(base_url) = base_url.and_then(|value| value.as_str()) {
         form.opencode_base_url.set(base_url);
     }
     if let Some(api) = provider

@@ -1754,6 +1754,104 @@ pub mod texts {
         }
     }
 
+    pub fn tui_label_hermes_models() -> &'static str {
+        if is_chinese() {
+            "Hermes 模型"
+        } else {
+            "Hermes Models"
+        }
+    }
+
+    pub fn tui_hermes_models_summary(count: usize) -> String {
+        if is_chinese() {
+            format!("{count} 个模型")
+        } else if count == 1 {
+            "1 model".to_string()
+        } else {
+            format!("{count} models")
+        }
+    }
+
+    pub fn tui_hermes_models_open_hint() -> &'static str {
+        if is_chinese() {
+            "按 Enter 管理 Hermes 模型"
+        } else {
+            "Press Enter to manage Hermes models"
+        }
+    }
+
+    pub fn tui_hermes_models_title() -> &'static str {
+        if is_chinese() {
+            "Hermes 模型"
+        } else {
+            "Hermes Models"
+        }
+    }
+
+    pub fn tui_hermes_models_empty_state() -> &'static str {
+        if is_chinese() {
+            "暂无模型，按 a 添加"
+        } else {
+            "No models yet. Press a to add one."
+        }
+    }
+
+    pub fn tui_hermes_model_add_title() -> &'static str {
+        if is_chinese() {
+            "添加 Hermes 模型"
+        } else {
+            "Add Hermes Model"
+        }
+    }
+
+    pub fn tui_hermes_model_edit_title() -> &'static str {
+        if is_chinese() {
+            "编辑 Hermes 模型"
+        } else {
+            "Edit Hermes Model"
+        }
+    }
+
+    pub fn tui_hermes_model_id_label() -> &'static str {
+        if is_chinese() {
+            "模型 ID"
+        } else {
+            "Model ID"
+        }
+    }
+
+    pub fn tui_hermes_model_id_required() -> &'static str {
+        if is_chinese() {
+            "模型 ID 不能为空。"
+        } else {
+            "Model ID cannot be empty."
+        }
+    }
+
+    pub fn tui_hermes_model_duplicate_id(id: &str) -> String {
+        if is_chinese() {
+            format!("模型 ID `{id}` 已存在。")
+        } else {
+            format!("Model ID `{id}` already exists.")
+        }
+    }
+
+    pub fn tui_hermes_model_invalid_entry() -> &'static str {
+        if is_chinese() {
+            "模型配置必须是 JSON 对象。"
+        } else {
+            "Model configuration must be a JSON object."
+        }
+    }
+
+    pub fn tui_hermes_model_positive_integer_required(label: &str) -> String {
+        if is_chinese() {
+            format!("{label}必须是正整数。")
+        } else {
+            format!("{label} must be a positive integer.")
+        }
+    }
+
     pub fn tui_openclaw_models_open_hint() -> &'static str {
         if is_chinese() {
             "按 Enter 编辑 OpenClaw 模型列表"

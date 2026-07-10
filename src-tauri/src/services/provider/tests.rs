@@ -1306,6 +1306,219 @@ custom_providers: []
 
 #[test]
 #[serial]
+fn hermes_switch_normalizes_legacy_model_parameter_aliases() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(&config_path, "custom_providers: []\n").expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "legacy".to_string(),
+            Provider::with_id(
+                "legacy".to_string(),
+                "Legacy Hermes".to_string(),
+                json!({
+                    "base_url": "https://hermes.example/v1",
+                    "api_key": "sk-hermes",
+                    "models": [{
+                        "id": "legacy-model",
+                        "contextLength": 128000,
+                        "maxTokens": 8192,
+                        "reasoning_effort": "high"
+                    }]
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    ProviderService::switch(&state, AppType::Hermes, "legacy")
+        .expect("switch legacy Hermes provider");
+
+    let yaml = crate::hermes_config::read_hermes_config().expect("read Hermes config");
+    let model = yaml
+        .get("custom_providers")
+        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(|providers| providers.first())
+        .and_then(|provider| provider.get("models"))
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|models| models.get("legacy-model"))
+        .expect("legacy model should be written");
+
+    assert_eq!(
+        model.get("context_length").and_then(|value| value.as_u64()),
+        Some(128000)
+    );
+    assert_eq!(
+        model.get("max_tokens").and_then(|value| value.as_u64()),
+        Some(8192)
+    );
+    assert_eq!(
+        model
+            .get("reasoning_effort")
+            .and_then(|value| value.as_str()),
+        Some("high")
+    );
+    assert!(model.get("contextLength").is_none());
+    assert!(model.get("contextWindow").is_none());
+    assert!(model.get("maxTokens").is_none());
+}
+
+#[test]
+#[serial]
+fn hermes_update_persists_structured_model_parameters_to_db_and_live_config() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(&config_path, "custom_providers: []\n").expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "structured".to_string(),
+            Provider::with_id(
+                "structured".to_string(),
+                "Structured Hermes".to_string(),
+                json!({
+                    "base_url": "https://old.example/v1",
+                    "api_key": "sk-old",
+                    "models": [{ "id": "old-model" }]
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+    let updated = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({
+            "base_url": "https://hermes.example/v1",
+            "api_key": "sk-hermes-test",
+            "headers": { "X-Test": "preserved" },
+            "models": [{
+                "id": "gpt-5",
+                "context_length": 128000,
+                "max_tokens": 8192,
+                "reasoning_effort": "high"
+            }]
+        }),
+        None,
+    );
+
+    ProviderService::update(&state, AppType::Hermes, updated).expect("update Hermes provider");
+
+    let stored = state
+        .db
+        .get_provider_by_id("structured", AppType::Hermes.as_str())
+        .expect("read stored Hermes provider")
+        .expect("stored Hermes provider should exist");
+    let stored_model = stored.settings_config["models"]
+        .as_array()
+        .and_then(|models| models.first())
+        .expect("stored model should remain an array entry");
+    assert_eq!(stored_model["context_length"], 128000);
+    assert_eq!(stored_model["max_tokens"], 8192);
+    assert_eq!(stored_model["reasoning_effort"], "high");
+    assert!(stored_model.get("contextWindow").is_none());
+    assert!(stored_model.get("maxTokens").is_none());
+    assert_eq!(stored.settings_config["headers"]["X-Test"], "preserved");
+
+    let yaml = crate::hermes_config::read_hermes_config().expect("read Hermes config");
+    let live_provider = yaml
+        .get("custom_providers")
+        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(|providers| {
+            providers.iter().find(|provider| {
+                provider.get("name").and_then(serde_yaml::Value::as_str) == Some("structured")
+            })
+        })
+        .expect("updated provider should be written to config.yaml");
+    let live_model = live_provider
+        .get("models")
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|models| models.get("gpt-5"))
+        .expect("structured model should be written by ID");
+    assert_eq!(
+        live_model
+            .get("context_length")
+            .and_then(serde_yaml::Value::as_u64),
+        Some(128000)
+    );
+    assert_eq!(
+        live_model
+            .get("max_tokens")
+            .and_then(serde_yaml::Value::as_u64),
+        Some(8192)
+    );
+    assert_eq!(
+        live_model
+            .get("reasoning_effort")
+            .and_then(serde_yaml::Value::as_str),
+        Some("high")
+    );
+    assert_eq!(
+        live_provider
+            .get("headers")
+            .and_then(|headers| headers.get("X-Test"))
+            .and_then(serde_yaml::Value::as_str),
+        Some("preserved")
+    );
+    assert!(live_model.get("contextWindow").is_none());
+    assert!(live_model.get("maxTokens").is_none());
+
+    let cleared = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({
+            "base_url": "https://hermes.example/v1",
+            "api_key": "sk-hermes-test",
+            "headers": { "X-Test": "preserved" },
+            "models": []
+        }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, cleared)
+        .expect("clear Hermes provider models");
+
+    let stored = state
+        .db
+        .get_provider_by_id("structured", AppType::Hermes.as_str())
+        .expect("read cleared Hermes provider")
+        .expect("cleared Hermes provider should exist");
+    assert_eq!(stored.settings_config["models"], json!([]));
+
+    let yaml = crate::hermes_config::read_hermes_config().expect("read cleared Hermes config");
+    let live_provider = yaml
+        .get("custom_providers")
+        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(|providers| {
+            providers.iter().find(|provider| {
+                provider.get("name").and_then(serde_yaml::Value::as_str) == Some("structured")
+            })
+        })
+        .expect("cleared provider should remain in config.yaml");
+    assert!(live_provider.get("model").is_none());
+    assert!(live_provider.get("models").is_none());
+}
+
+#[test]
+#[serial]
 fn current_prefers_effective_current_from_local_settings_without_mutating_config() {
     let temp_home = TempDir::new().expect("create temp home");
     let _env = EnvGuard::set_home(temp_home.path());

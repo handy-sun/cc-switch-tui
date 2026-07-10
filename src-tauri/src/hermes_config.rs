@@ -443,6 +443,38 @@ fn sanitize_hermes_provider_keys(config: &mut serde_json::Value) {
     for field in LEGACY_FIELDS_TO_DROP {
         obj.remove(*field);
     }
+
+    if let Some(models) = obj.get_mut("models") {
+        match models {
+            serde_json::Value::Array(models) => {
+                for model in models {
+                    sanitize_hermes_model_keys(model);
+                }
+            }
+            serde_json::Value::Object(models) => {
+                for model in models.values_mut() {
+                    sanitize_hermes_model_keys(model);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn sanitize_hermes_model_keys(model: &mut serde_json::Value) {
+    let Some(model) = model.as_object_mut() else {
+        return;
+    };
+    for (from, to) in [
+        ("contextWindow", "context_length"),
+        ("context_window", "context_length"),
+        ("contextLength", "context_length"),
+        ("maxTokens", "max_tokens"),
+    ] {
+        if let Some(value) = model.remove(from) {
+            model.entry(to.to_string()).or_insert(value);
+        }
+    }
 }
 
 /// If `config.models` is a JSON array, convert it in-place to the dict shape.
@@ -458,6 +490,55 @@ fn normalize_provider_models_for_write(config: &mut serde_json::Value) {
         let taken = std::mem::take(models_val);
         if let serde_json::Value::Array(arr) = taken {
             *models_val = models_array_to_dict(arr);
+        }
+    }
+}
+
+fn merge_existing_hermes_model_fields(
+    existing_provider: &serde_yaml::Mapping,
+    new_provider: &mut serde_yaml::Mapping,
+) {
+    let models_key = serde_yaml::Value::String("models".to_string());
+    let Some(existing_models) = existing_provider
+        .get(&models_key)
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return;
+    };
+    let Some(new_models) = new_provider
+        .get_mut(&models_key)
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    else {
+        return;
+    };
+
+    for (model_id, new_model) in new_models {
+        let Some(existing_model) = existing_models
+            .get(model_id)
+            .and_then(serde_yaml::Value::as_mapping)
+        else {
+            continue;
+        };
+        let Some(new_model) = new_model.as_mapping_mut() else {
+            continue;
+        };
+        for (key, value) in existing_model {
+            if matches!(
+                key.as_str(),
+                Some(
+                    "context_length"
+                        | "context_window"
+                        | "contextWindow"
+                        | "contextLength"
+                        | "max_tokens"
+                        | "maxTokens"
+                )
+            ) {
+                continue;
+            }
+            new_model
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
         }
     }
 }
@@ -725,6 +806,9 @@ pub fn set_provider(
     // before touching models / YAML — avoids writing non-Hermes fields back.
     let mut normalized = provider_config;
     sanitize_hermes_provider_keys(&mut normalized);
+    let models_were_explicit = normalized
+        .as_object()
+        .is_some_and(|provider| provider.contains_key("models"));
 
     // Normalize `models` from UI array to Hermes YAML dict before serializing.
     normalize_provider_models_for_write(&mut normalized);
@@ -751,6 +835,13 @@ pub fn set_provider(
         } else {
             m.remove(serde_yaml::Value::String("model".to_string()));
         }
+        if models_were_explicit
+            && m.get("models")
+                .and_then(serde_yaml::Value::as_mapping)
+                .is_some_and(serde_yaml::Mapping::is_empty)
+        {
+            m.remove(serde_yaml::Value::String("models".to_string()));
+        }
     }
 
     if let Some(existing) = providers
@@ -765,7 +856,13 @@ pub fn set_provider(
         if let (Some(existing_map), serde_yaml::Value::Mapping(new_map)) =
             (existing.as_mapping(), &mut yaml_val)
         {
+            if models_were_explicit {
+                merge_existing_hermes_model_fields(existing_map, new_map);
+            }
             for (k, v) in existing_map {
+                if models_were_explicit && matches!(k.as_str(), Some("model") | Some("models")) {
+                    continue;
+                }
                 new_map.entry(k.clone()).or_insert_with(|| v.clone());
             }
         }
@@ -1428,6 +1525,82 @@ custom_providers:
             assert_eq!(provider["api_key"], "sk-new");
             assert_eq!(provider["request_timeout_seconds"], 300);
             assert_eq!(provider["key_env"], "ACME_API_KEY");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn set_provider_explicit_empty_models_removes_live_models() {
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: acme
+    base_url: https://old.example.com
+    model: old-model
+    models:
+      old-model:
+        context_length: 64000
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            set_provider(
+                "acme",
+                serde_json::json!({
+                    "base_url": "https://new.example.com",
+                    "models": []
+                }),
+            )
+            .unwrap();
+
+            let provider = get_provider("acme").unwrap().unwrap();
+            assert_eq!(provider["base_url"], "https://new.example.com");
+            assert!(provider.get("model").is_none());
+            assert!(provider.get("models").is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn set_provider_preserves_unknown_fields_for_retained_models_only() {
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: acme
+    base_url: https://old.example.com
+    model: keep
+    models:
+      keep:
+        context_length: 64000
+        maxTokens: 4096
+        reasoning_effort: high
+      remove:
+        context_length: 32000
+        live_only: true
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            set_provider(
+                "acme",
+                serde_json::json!({
+                    "base_url": "https://new.example.com",
+                    "models": [{
+                        "id": "keep"
+                    }]
+                }),
+            )
+            .unwrap();
+
+            let provider = get_provider("acme").unwrap().unwrap();
+            let models = provider["models"].as_array().unwrap();
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0]["id"], "keep");
+            assert!(models[0].get("context_length").is_none());
+            assert!(models[0].get("maxTokens").is_none());
+            assert_eq!(models[0]["reasoning_effort"], "high");
         });
     }
 

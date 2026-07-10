@@ -640,6 +640,44 @@ fn add_form_template_chips_are_single_row() {
 }
 
 #[test]
+fn hermes_models_picker_and_editor_render_structured_fields() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Hermes));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Hermes);
+    form.openclaw_models = vec![json!({
+        "id": "gpt-5",
+        "context_length": 128000,
+        "max_tokens": 8192
+    })];
+    app.form = Some(crate::cli::tui::form::FormState::ProviderAdd(form));
+    app.overlay = Overlay::HermesModelsPicker { selected: 0 };
+
+    let data = minimal_data(&app.app_type);
+    let picker = all_text(&render(&app, &data));
+    assert!(picker.contains("Hermes Models"), "{picker}");
+    assert!(picker.contains("gpt-5"), "{picker}");
+    assert!(picker.contains("context 128000"), "{picker}");
+    assert!(picker.contains("output 8192"), "{picker}");
+    assert!(picker.contains("a add"), "{picker}");
+
+    app.on_key(key(KeyCode::Char('a')), &data);
+    let editor = all_text(&render(&app, &data));
+    assert!(editor.contains("Add Hermes Model"), "{editor}");
+    assert!(editor.contains("Model ID"), "{editor}");
+    assert!(
+        editor.contains(texts::tui_label_context_limit()),
+        "{editor}"
+    );
+    assert!(editor.contains(texts::tui_label_output_limit()), "{editor}");
+    assert!(editor.contains("Enter apply"), "{editor}");
+}
+
+#[test]
 fn provider_form_fields_show_dashed_divider_before_common_snippet() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");

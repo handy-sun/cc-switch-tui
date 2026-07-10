@@ -224,6 +224,23 @@ pub(crate) fn render_overlay(
             theme,
             &app.overlay,
         ),
+        Overlay::HermesModelsPicker { selected } => {
+            super::hermes_models::render_hermes_models_picker_overlay(
+                frame,
+                app,
+                content_area,
+                theme,
+                *selected,
+            )
+        }
+        Overlay::HermesModelEntryEditor(_) => {
+            super::hermes_models::render_hermes_model_entry_editor_overlay(
+                frame,
+                content_area,
+                theme,
+                &app.overlay,
+            )
+        }
         Overlay::Loading {
             kind,
             title,

@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(test)]
 mod tests {
-    use super::types::{McpEnvEditorField, McpEnvEntryEditorState};
+    use super::types::{HermesModelEditorField, McpEnvEditorField, McpEnvEntryEditorState};
     use super::*;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use serde_json::json;
@@ -3203,6 +3203,108 @@ mod tests {
                 EditorSubmit::ProviderFormApplyOpenClawModels
             ))
         ));
+    }
+
+    fn open_hermes_models_picker(app: &mut App, data: &UiData) {
+        app.on_key(key(KeyCode::Char('a')), data);
+        app.on_key(key(KeyCode::Enter), data);
+        let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
+            panic!("expected ProviderAdd form");
+        };
+        form.focus = super::super::form::FormFocus::Fields;
+        form.editing = false;
+        form.field_idx = form
+            .fields()
+            .iter()
+            .position(|field| *field == ProviderAddField::HermesModels)
+            .expect("HermesModels field should exist");
+        app.on_key(key(KeyCode::Enter), data);
+    }
+
+    #[test]
+    fn provider_add_form_hermes_models_enter_opens_structured_picker() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+
+        open_hermes_models_picker(&mut app, &data);
+
+        assert!(matches!(
+            app.overlay,
+            Overlay::HermesModelsPicker { selected: 0 }
+        ));
+        assert!(app.editor.is_none());
+    }
+
+    #[test]
+    fn hermes_models_picker_adds_structured_model() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+        open_hermes_models_picker(&mut app, &data);
+
+        app.on_key(key(KeyCode::Char('a')), &data);
+        let Overlay::HermesModelEntryEditor(editor) = &mut app.overlay else {
+            panic!("expected Hermes model entry editor");
+        };
+        editor.id.set("gpt-5");
+
+        app.on_key(key(KeyCode::Tab), &data);
+        let Overlay::HermesModelEntryEditor(editor) = &mut app.overlay else {
+            panic!("expected Hermes model entry editor");
+        };
+        assert_eq!(editor.field, HermesModelEditorField::ContextLength);
+        editor.context_length.set("128000");
+
+        app.on_key(key(KeyCode::Tab), &data);
+        let Overlay::HermesModelEntryEditor(editor) = &mut app.overlay else {
+            panic!("expected Hermes model entry editor");
+        };
+        assert_eq!(editor.field, HermesModelEditorField::MaxTokens);
+        editor.max_tokens.set("8192");
+
+        app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(
+            app.overlay,
+            Overlay::HermesModelsPicker { selected: 0 }
+        ));
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected ProviderAdd form");
+        };
+        assert_eq!(form.openclaw_models[0]["id"], "gpt-5");
+        assert_eq!(form.openclaw_models[0]["context_length"], 128000);
+        assert_eq!(form.openclaw_models[0]["max_tokens"], 8192);
+    }
+
+    #[test]
+    fn hermes_models_picker_rejects_duplicate_and_deletes_selected_model() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+        open_hermes_models_picker(&mut app, &data);
+        let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
+            panic!("expected ProviderAdd form");
+        };
+        form.openclaw_models = vec![json!({ "id": "existing" })];
+
+        app.on_key(key(KeyCode::Char('a')), &data);
+        let Overlay::HermesModelEntryEditor(editor) = &mut app.overlay else {
+            panic!("expected Hermes model entry editor");
+        };
+        editor.id.set("existing");
+        app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(app.overlay, Overlay::HermesModelEntryEditor(_)));
+        assert!(app.toast.is_some());
+
+        app.on_key(key(KeyCode::Esc), &data);
+        app.on_key(key(KeyCode::Backspace), &data);
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected ProviderAdd form");
+        };
+        assert!(form.openclaw_models.is_empty());
     }
 
     #[test]

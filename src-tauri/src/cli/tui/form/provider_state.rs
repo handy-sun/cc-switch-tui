@@ -69,6 +69,7 @@ impl ProviderAddFormState {
             gemini_model: TextInput::new(""),
             openclaw_user_agent: false,
             openclaw_models: Vec::new(),
+            hermes_models_touched: false,
             opencode_npm_package: TextInput::new(openclaw_api_default),
             opencode_api_key: TextInput::new(""),
             opencode_base_url: TextInput::new(""),
@@ -199,11 +200,9 @@ impl ProviderAddFormState {
                 fields.push(ProviderAddField::OpenClawModels);
             }
             AppType::Hermes => {
-                fields.push(ProviderAddField::OpenClawApiProtocol);
                 fields.push(ProviderAddField::OpenCodeApiKey);
                 fields.push(ProviderAddField::OpenCodeBaseUrl);
-                fields.push(ProviderAddField::OpenClawUserAgent);
-                fields.push(ProviderAddField::OpenClawModels);
+                fields.push(ProviderAddField::HermesModels);
             }
         }
 
@@ -250,6 +249,7 @@ impl ProviderAddFormState {
             | ProviderAddField::OpenClawApiProtocol
             | ProviderAddField::OpenClawUserAgent
             | ProviderAddField::OpenClawModels
+            | ProviderAddField::HermesModels
             | ProviderAddField::CommonConfigDivider
             | ProviderAddField::CommonSnippet
             | ProviderAddField::IncludeCommonConfig => None,
@@ -295,6 +295,7 @@ impl ProviderAddFormState {
             | ProviderAddField::OpenClawApiProtocol
             | ProviderAddField::OpenClawUserAgent
             | ProviderAddField::OpenClawModels
+            | ProviderAddField::HermesModels
             | ProviderAddField::CommonConfigDivider
             | ProviderAddField::CommonSnippet
             | ProviderAddField::IncludeCommonConfig => None,
@@ -402,6 +403,7 @@ impl ProviderAddFormState {
         let previous_include_common_config_touched = self.include_common_config_touched;
         let previous_extra = self.extra.clone();
         let previous_initial_snapshot = self.initial_snapshot.clone();
+        let previous_hermes_models_touched = self.hermes_models_touched;
 
         let mut next = Self::from_provider(self.app_type.clone(), provider);
         let overlay = serde_json::to_value(provider).unwrap_or_else(|_| json!({}));
@@ -441,6 +443,7 @@ impl ProviderAddFormState {
             next.id_is_manual = true;
         }
         next.initial_snapshot = previous_initial_snapshot;
+        next.hermes_models_touched = previous_hermes_models_touched;
 
         *self = next;
     }
@@ -460,6 +463,17 @@ impl ProviderAddFormState {
         let previous_include_common_config = self.include_common_config;
         let previous_include_common_config_touched = self.include_common_config_touched;
         let previous_initial_snapshot = self.initial_snapshot.clone();
+        let previous_hermes_models_touched = self.hermes_models_touched;
+        let hermes_models_were_explicit = if self.app_type == AppType::Hermes {
+            let edited_settings = provider_value
+                .get("settingsConfig")
+                .and_then(Value::as_object);
+            provider_value.pointer("/settingsConfig/models").is_some()
+                || (!self.openclaw_models.is_empty()
+                    && edited_settings.is_none_or(|settings| !settings.contains_key("models")))
+        } else {
+            false
+        };
 
         let current_value = self.to_provider_json_value();
         if let (Some(current_obj), Some(edited_obj)) =
@@ -511,6 +525,7 @@ impl ProviderAddFormState {
             next.id_is_manual = true;
         }
         next.initial_snapshot = previous_initial_snapshot;
+        next.hermes_models_touched = previous_hermes_models_touched || hermes_models_were_explicit;
 
         *self = next;
         Ok(())
@@ -568,6 +583,70 @@ impl ProviderAddFormState {
         texts::tui_openclaw_models_summary(total)
     }
 
+    pub(crate) fn hermes_models_summary(&self) -> String {
+        texts::tui_hermes_models_summary(self.openclaw_models.len())
+    }
+
+    pub fn upsert_hermes_model(
+        &mut self,
+        row: Option<usize>,
+        id: String,
+        context_length: String,
+        max_tokens: String,
+    ) -> Result<usize, String> {
+        let id = id.trim().to_string();
+        if id.is_empty() {
+            return Err(texts::tui_hermes_model_id_required().to_string());
+        }
+        if self
+            .openclaw_models
+            .iter()
+            .enumerate()
+            .any(|(index, model)| {
+                Some(index) != row
+                    && model.get("id").and_then(Value::as_str).map(str::trim) == Some(id.as_str())
+            })
+        {
+            return Err(texts::tui_hermes_model_duplicate_id(&id));
+        }
+
+        let context_length =
+            parse_optional_positive_u64(&context_length, texts::tui_label_context_limit())?;
+        let max_tokens = parse_optional_positive_u64(&max_tokens, texts::tui_label_output_limit())?;
+
+        let mut model = row
+            .and_then(|index| self.openclaw_models.get(index).cloned())
+            .unwrap_or_else(|| json!({}));
+        super::provider_json::normalize_hermes_model_fields(&mut model);
+        let model = model
+            .as_object_mut()
+            .ok_or_else(|| texts::tui_hermes_model_invalid_entry().to_string())?;
+        model.insert("id".to_string(), json!(id));
+        set_or_remove_model_limit(model, "context_length", context_length);
+        set_or_remove_model_limit(model, "max_tokens", max_tokens);
+
+        let selected = row.unwrap_or(self.openclaw_models.len());
+        if let Some(row) = row {
+            let Some(existing) = self.openclaw_models.get_mut(row) else {
+                return Err(texts::tui_hermes_model_invalid_entry().to_string());
+            };
+            *existing = Value::Object(model.clone());
+        } else {
+            self.openclaw_models.push(Value::Object(model.clone()));
+        }
+        self.hermes_models_touched = true;
+        Ok(selected)
+    }
+
+    pub fn remove_hermes_model(&mut self, row: usize) -> bool {
+        if row >= self.openclaw_models.len() {
+            return false;
+        }
+        self.openclaw_models.remove(row);
+        self.hermes_models_touched = true;
+        true
+    }
+
     pub(crate) fn openclaw_models_editor_text(&self) -> String {
         serde_json::to_string_pretty(&Value::Array(self.openclaw_models.clone()))
             .unwrap_or_else(|_| "[]".to_string())
@@ -591,6 +670,30 @@ impl ProviderAddFormState {
             .ok_or_else(|| texts::tui_toast_json_must_be_object().to_string())?;
         settings_obj.insert("models".to_string(), models_value);
         self.apply_provider_json_value_to_fields(provider_value)
+    }
+}
+
+fn parse_optional_positive_u64(raw: &str, label: &str) -> Result<Option<u64>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    raw.parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .map(Some)
+        .ok_or_else(|| texts::tui_hermes_model_positive_integer_required(label))
+}
+
+fn set_or_remove_model_limit(
+    model: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<u64>,
+) {
+    if let Some(value) = value {
+        model.insert(key.to_string(), json!(value));
+    } else {
+        model.remove(key);
     }
 }
 
