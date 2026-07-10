@@ -1519,6 +1519,276 @@ fn hermes_update_persists_structured_model_parameters_to_db_and_live_config() {
 
 #[test]
 #[serial]
+fn hermes_update_current_provider_refreshes_live_model_defaults() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+model:
+  provider: structured
+  default: old-model
+  base_url: https://old.example/v1
+  api_key: sk-old
+custom_providers:
+  - name: structured
+    base_url: https://old.example/v1
+    api_key: sk-old
+    model: old-model
+    models:
+      old-model: {}
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "structured".to_string(),
+            Provider::with_id(
+                "structured".to_string(),
+                "Structured Hermes".to_string(),
+                json!({
+                    "base_url": "https://old.example/v1",
+                    "api_key": "sk-old",
+                    "models": [{ "id": "old-model" }]
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({
+            "base_url": "https://new.example/v1",
+            "api_key": "sk-new",
+            "models": [{ "id": "new-model" }]
+        }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated)
+        .expect("update current Hermes provider");
+
+    let model = crate::hermes_config::get_model_config()
+        .expect("read Hermes model config")
+        .expect("Hermes model config should remain present");
+    assert_eq!(model.provider.as_deref(), Some("structured"));
+    assert_eq!(model.default.as_deref(), Some("new-model"));
+    assert_eq!(model.base_url.as_deref(), Some("https://new.example/v1"));
+    assert_eq!(
+        model.extra.get("api_key").and_then(|value| value.as_str()),
+        Some("sk-new")
+    );
+
+    let cleared = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({ "models": [{ "id": "new-model" }] }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, cleared)
+        .expect("clear current Hermes credentials");
+    let model = crate::hermes_config::get_model_config()
+        .expect("read cleared Hermes model config")
+        .expect("Hermes model config should remain present");
+    assert!(model.base_url.is_none());
+    assert!(model.extra.get("api_key").is_none());
+}
+
+#[test]
+#[serial]
+fn hermes_update_non_current_provider_keeps_active_model_defaults() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+model:
+  provider: active
+  default: active-model
+  base_url: https://active.example/v1
+  api_key: sk-active
+custom_providers:
+  - name: active
+    models:
+      active-model: {}
+  - name: other
+    models:
+      old-other-model: {}
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    let manager = config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager");
+    manager.providers.insert(
+        "active".to_string(),
+        Provider::with_id(
+            "active".to_string(),
+            "Active Hermes".to_string(),
+            json!({ "models": [{ "id": "active-model" }] }),
+            None,
+        ),
+    );
+    manager.providers.insert(
+        "other".to_string(),
+        Provider::with_id(
+            "other".to_string(),
+            "Other Hermes".to_string(),
+            json!({ "models": [{ "id": "old-other-model" }] }),
+            None,
+        ),
+    );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "other".to_string(),
+        "Other Hermes".to_string(),
+        json!({ "models": [{ "id": "new-other-model" }] }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated)
+        .expect("update non-current Hermes provider");
+
+    let model = crate::hermes_config::get_model_config()
+        .expect("read Hermes model config")
+        .expect("Hermes model config should remain present");
+    assert_eq!(model.provider.as_deref(), Some("active"));
+    assert_eq!(model.default.as_deref(), Some("active-model"));
+    assert_eq!(model.base_url.as_deref(), Some("https://active.example/v1"));
+    assert_eq!(
+        model.extra.get("api_key").and_then(|value| value.as_str()),
+        Some("sk-active")
+    );
+}
+
+#[test]
+#[serial]
+fn hermes_update_can_remove_top_level_fields_without_stripping_live_only_fields() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+custom_providers:
+  - name: structured
+    base_url: https://old.example/v1
+    api_key: sk-old
+    headers:
+      X-Remove: old
+    request_timeout_seconds: 300
+    live_only: keep-me
+    model: keep-model
+    models:
+      keep-model: {}
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "structured".to_string(),
+            Provider::with_id(
+                "structured".to_string(),
+                "Structured Hermes".to_string(),
+                json!({
+                    "base_url": "https://old.example/v1",
+                    "api_key": "sk-old",
+                    "headers": { "X-Remove": "old" },
+                    "request_timeout_seconds": 300,
+                    "models": [{ "id": "keep-model" }]
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({ "models": [{ "id": "keep-model" }] }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated)
+        .expect("remove Hermes provider fields");
+
+    let stored = state
+        .db
+        .get_provider_by_id("structured", AppType::Hermes.as_str())
+        .expect("read stored provider")
+        .expect("stored provider should exist");
+    assert!(stored.settings_config.get("base_url").is_none());
+    assert!(stored.settings_config.get("api_key").is_none());
+    assert!(stored.settings_config.get("headers").is_none());
+    assert!(stored
+        .settings_config
+        .get("request_timeout_seconds")
+        .is_none());
+
+    let live = crate::hermes_config::get_provider("structured")
+        .expect("read live provider")
+        .expect("live provider should exist");
+    assert!(live.get("base_url").is_none());
+    assert!(live.get("api_key").is_none());
+    assert!(live.get("headers").is_none());
+    assert!(live.get("request_timeout_seconds").is_none());
+    assert_eq!(live["live_only"], "keep-me");
+}
+
+#[test]
+fn hermes_provider_validation_rejects_malformed_models() {
+    let invalid_models = [
+        json!("not-a-list-or-dict"),
+        json!(["not-an-object"]),
+        json!([{ "id": " " }]),
+        json!([{ "id": "duplicate" }, { "id": "duplicate" }]),
+        json!([{ "id": "zero-context", "context_length": 0 }]),
+        json!([{ "id": "fractional-output", "max_tokens": 1.5 }]),
+    ];
+
+    for models in invalid_models {
+        let provider = Provider::with_id(
+            "invalid".to_string(),
+            "Invalid Hermes".to_string(),
+            json!({ "models": models }),
+            None,
+        );
+        assert!(
+            ProviderService::validate_provider_settings(&AppType::Hermes, &provider).is_err(),
+            "Hermes models should be rejected: {}",
+            provider.settings_config["models"]
+        );
+    }
+}
+
+#[test]
+#[serial]
 fn current_prefers_effective_current_from_local_settings_without_mutating_config() {
     let temp_home = TempDir::new().expect("create temp home");
     let _env = EnvGuard::set_home(temp_home.path());

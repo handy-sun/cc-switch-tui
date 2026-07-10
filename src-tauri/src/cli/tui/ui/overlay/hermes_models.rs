@@ -62,7 +62,9 @@ pub(super) fn render_hermes_models_picker_overlay(
             .map(|value| value.to_string())
             .unwrap_or_else(|| "-".to_string());
         ListItem::new(Line::raw(format!(
-            "{id}  |  context {context}  |  output {output}"
+            "{id}  |  {} {context}  |  {} {output}",
+            texts::tui_label_context_limit(),
+            texts::tui_label_output_limit()
         )))
     });
     let list = List::new(items)

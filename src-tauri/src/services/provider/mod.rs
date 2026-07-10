@@ -72,6 +72,7 @@ struct PostCommitAction {
     stale_codex_catalog_keys: Vec<String>,
     refresh_snapshot: bool,
     apply_hermes_switch_defaults: bool,
+    hermes_removed_fields: Vec<String>,
     common_config_snippet: Option<String>,
     takeover_active: bool,
     /// When true, user-facing preference keys (approval_mode, disable_response_storage,
@@ -178,6 +179,7 @@ impl ProviderService {
                 snippet.as_deref(),
                 true,
                 true,
+                &[],
             )?;
         }
 
@@ -412,6 +414,7 @@ impl ProviderService {
                 action.common_config_snippet.as_deref(),
                 apply_common_config,
                 action.preserve_live_preferences,
+                &action.hermes_removed_fields,
             )?;
             if action.apply_hermes_switch_defaults {
                 crate::hermes_config::apply_switch_defaults(
@@ -832,6 +835,7 @@ impl ProviderService {
             stale_codex_catalog_keys: Vec::new(),
             refresh_snapshot: false,
             apply_hermes_switch_defaults: false,
+            hermes_removed_fields: Vec::new(),
             common_config_snippet: config.common_config_snippets.get(app_type).cloned(),
             takeover_active,
             preserve_live_preferences,
@@ -864,6 +868,12 @@ impl ProviderService {
 
         if matches!(app_type, AppType::Codex) {
             crate::codex_config::normalize_codex_settings_config_for_storage(
+                &mut provider.settings_config,
+            )?;
+        }
+        if matches!(app_type, AppType::Hermes) {
+            crate::hermes_config::normalize_provider_settings_for_storage(
+                &provider.id,
                 &mut provider.settings_config,
             )?;
         }
@@ -1177,6 +1187,12 @@ impl ProviderService {
         let mut provider = provider;
         // 归一化 Claude 模型键
         Self::normalize_provider_if_claude(&app_type, &mut provider);
+        if matches!(app_type, AppType::Hermes) {
+            crate::hermes_config::normalize_provider_settings_for_storage(
+                &provider.id,
+                &mut provider.settings_config,
+            )?;
+        }
         Self::validate_provider_settings(&app_type, &provider)?;
 
         let app_type_clone = app_type.clone();
@@ -1243,6 +1259,7 @@ impl ProviderService {
                     stale_codex_catalog_keys: Vec::new(),
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
+                    hermes_removed_fields: Vec::new(),
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1258,6 +1275,7 @@ impl ProviderService {
                     stale_codex_catalog_keys: Vec::new(),
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
+                    hermes_removed_fields: Vec::new(),
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1279,8 +1297,16 @@ impl ProviderService {
         let mut provider = provider;
         // 归一化 Claude 模型键
         Self::normalize_provider_if_claude(&app_type, &mut provider);
+        if matches!(app_type, AppType::Hermes) {
+            crate::hermes_config::normalize_provider_settings_for_storage(
+                &provider.id,
+                &mut provider.settings_config,
+            )?;
+        }
         Self::validate_provider_settings(&app_type, &provider)?;
         let provider_id = provider.id.clone();
+        let update_hermes_switch_defaults = matches!(app_type, AppType::Hermes)
+            && Self::current(state, AppType::Hermes)? == provider_id;
         let app_type_clone = app_type.clone();
         let provider_clone = provider.clone();
         let (effective_current_provider, stored_current_provider) = if app_type.is_additive_mode() {
@@ -1318,6 +1344,10 @@ impl ProviderService {
                 .providers
                 .get(&provider_id)
                 .and_then(Self::provider_codex_model_provider_key);
+            let previous_settings = manager
+                .providers
+                .get(&provider_id)
+                .map(|provider| provider.settings_config.clone());
             let mut merged = if let Some(existing) = manager.providers.get(&provider_id) {
                 let mut updated = provider_clone.clone();
                 match (existing.meta.as_ref(), updated.meta.take()) {
@@ -1349,6 +1379,19 @@ impl ProviderService {
                 &mut merged,
                 common_config_snippet.as_deref(),
             )?;
+            let hermes_removed_fields = if matches!(app_type_clone, AppType::Hermes) {
+                previous_settings
+                    .as_ref()
+                    .map(|previous| {
+                        crate::hermes_config::removed_provider_fields(
+                            previous,
+                            &merged.settings_config,
+                        )
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             if matches!(app_type_clone, AppType::Codex) {
                 let existing = manager
                     .providers
@@ -1398,7 +1441,8 @@ impl ProviderService {
                     sync_codex_catalog: matches!(&app_type_clone, AppType::Codex),
                     stale_codex_catalog_keys: Vec::new(),
                     refresh_snapshot: false,
-                    apply_hermes_switch_defaults: false,
+                    apply_hermes_switch_defaults: update_hermes_switch_defaults,
+                    hermes_removed_fields,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1422,6 +1466,7 @@ impl ProviderService {
                     stale_codex_catalog_keys,
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
+                    hermes_removed_fields: Vec::new(),
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1816,7 +1861,7 @@ impl ProviderService {
             }
 
             if let Err(e) =
-                Self::write_live_snapshot(app_type, provider, snippet.as_deref(), true, true)
+                Self::write_live_snapshot(app_type, provider, snippet.as_deref(), true, true, &[])
             {
                 log::warn!("sync_current_to_live: 写入 {app_type} live 配置失败: {e}");
             }
@@ -1931,6 +1976,7 @@ impl ProviderService {
                     stale_codex_catalog_keys: Vec::new(),
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: matches!(app_type_clone, AppType::Hermes),
+                    hermes_removed_fields: Vec::new(),
                     common_config_snippet: config
                         .common_config_snippets
                         .get(&app_type_clone)
@@ -1977,6 +2023,7 @@ impl ProviderService {
                 stale_codex_catalog_keys: Vec::new(),
                 refresh_snapshot: true,
                 apply_hermes_switch_defaults: false,
+                hermes_removed_fields: Vec::new(),
                 common_config_snippet: config.common_config_snippets.get(&app_type_clone).cloned(),
                 takeover_active: false,
                 preserve_live_preferences: true,
@@ -1998,6 +2045,7 @@ impl ProviderService {
         common_config_snippet: Option<&str>,
         apply_common_config: bool,
         preserve_live_preferences: bool,
+        hermes_removed_fields: &[String],
     ) -> Result<(), AppError> {
         let apply_common_config = Self::resolve_live_apply_common_config(
             app_type,
@@ -2072,8 +2120,20 @@ impl ProviderService {
                 write_result.map_err(Self::normalize_openclaw_live_write_error)
             }
             AppType::Hermes => {
-                crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())
+                if hermes_removed_fields.is_empty() {
+                    crate::hermes_config::set_provider(
+                        &provider.id,
+                        provider.settings_config.clone(),
+                    )
                     .map(|_| ())
+                } else {
+                    crate::hermes_config::set_provider_with_removed_fields(
+                        &provider.id,
+                        provider.settings_config.clone(),
+                        hermes_removed_fields,
+                    )
+                    .map(|_| ())
+                }
             }
         }
     }
@@ -2388,14 +2448,10 @@ impl ProviderService {
                 Self::validate_openclaw_provider_models(&provider.id, &config)?;
             }
             AppType::Hermes => {
-                // Hermes uses flexible YAML config; basic check that settings is an object
-                if !provider.settings_config.is_object() {
-                    return Err(AppError::localized(
-                        "provider.hermes.settings.not_object",
-                        "Hermes 供应商配置必须是 JSON 对象",
-                        "Hermes provider configuration must be a JSON object",
-                    ));
-                }
+                crate::hermes_config::validate_provider_settings(
+                    &provider.id,
+                    &provider.settings_config,
+                )?;
             }
         }
 

@@ -475,6 +475,19 @@ impl ProviderAddFormState {
             false
         };
 
+        if self.app_type == AppType::Hermes {
+            let provider_id = provider_value
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("Hermes")
+                .to_string();
+            let settings = provider_value
+                .get_mut("settingsConfig")
+                .ok_or_else(|| texts::tui_toast_json_must_be_object().to_string())?;
+            crate::hermes_config::normalize_provider_settings_for_storage(&provider_id, settings)
+                .map_err(|error| error.to_string())?;
+        }
+
         let current_value = self.to_provider_json_value();
         if let (Some(current_obj), Some(edited_obj)) =
             (current_value.as_object(), provider_value.as_object_mut())

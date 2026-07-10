@@ -2838,6 +2838,36 @@ fn provider_edit_form_hermes_normalizes_model_parameters() {
 }
 
 #[test]
+fn provider_edit_form_hermes_preserves_historical_model_dict() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({
+            "models": {
+                "historical-model": {
+                    "contextWindow": 128000,
+                    "maxTokens": 8192,
+                    "reasoning_effort": "high"
+                }
+            }
+        }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    let settings = &form.to_provider_json_value()["settingsConfig"];
+    let models = settings["models"]
+        .as_array()
+        .expect("historical Hermes model dict should load as an array");
+
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["id"], "historical-model");
+    assert_eq!(models[0]["context_length"], 128000);
+    assert_eq!(models[0]["max_tokens"], 8192);
+    assert_eq!(models[0]["reasoning_effort"], "high");
+}
+
+#[test]
 fn provider_add_form_openclaw_ignores_legacy_context_window_alias_when_loading() {
     let provider = Provider::with_id(
         "oclaw1".to_string(),

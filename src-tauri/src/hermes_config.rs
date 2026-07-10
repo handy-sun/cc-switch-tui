@@ -35,7 +35,7 @@ use crate::error::AppError;
 use crate::settings::{effective_backup_retain_count, get_hermes_override_dir};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -477,6 +477,194 @@ fn sanitize_hermes_model_keys(model: &mut serde_json::Value) {
     }
 }
 
+fn canonical_hermes_provider_key(key: &str) -> &str {
+    match key {
+        "baseUrl" => "base_url",
+        "apiKey" => "api_key",
+        "apiMode" => "api_mode",
+        "maxTokens" => "max_tokens",
+        "contextLength" => "context_length",
+        other => other,
+    }
+}
+
+fn invalid_hermes_models(provider_id: &str, detail_zh: &str, detail_en: &str) -> AppError {
+    AppError::localized(
+        "provider.hermes.models.invalid",
+        format!("Hermes 供应商 {provider_id} 的 models 配置无效：{detail_zh}"),
+        format!("Hermes provider {provider_id} has invalid models: {detail_en}"),
+    )
+}
+
+fn normalize_hermes_model_array(
+    provider_id: &str,
+    models: Vec<serde_json::Value>,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let mut normalized = Vec::with_capacity(models.len());
+    let mut ids = HashSet::with_capacity(models.len());
+
+    for (index, mut model) in models.into_iter().enumerate() {
+        sanitize_hermes_model_keys(&mut model);
+        let obj = model.as_object_mut().ok_or_else(|| {
+            invalid_hermes_models(
+                provider_id,
+                &format!("第 {} 项必须是对象", index + 1),
+                &format!("entry {} must be an object", index + 1),
+            )
+        })?;
+        let id = obj
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                invalid_hermes_models(
+                    provider_id,
+                    &format!("第 {} 项缺少非空模型 ID", index + 1),
+                    &format!("entry {} requires a non-empty model ID", index + 1),
+                )
+            })?;
+        if !ids.insert(id.clone()) {
+            return Err(invalid_hermes_models(
+                provider_id,
+                &format!("模型 ID `{id}` 重复"),
+                &format!("model ID `{id}` is duplicated"),
+            ));
+        }
+        obj.insert("id".to_string(), serde_json::Value::String(id));
+
+        for (key, label_zh, label_en) in [
+            ("context_length", "上下文长度", "context_length"),
+            ("max_tokens", "最大输出 Token", "max_tokens"),
+        ] {
+            if obj
+                .get(key)
+                .is_some_and(|value| value.as_u64().is_none_or(|value| value == 0))
+            {
+                return Err(invalid_hermes_models(
+                    provider_id,
+                    &format!("模型 `{}` 的{label_zh}必须是正整数", obj["id"]),
+                    &format!(
+                        "model `{}` {label_en} must be a positive integer",
+                        obj["id"]
+                    ),
+                ));
+            }
+        }
+        normalized.push(model);
+    }
+
+    Ok(normalized)
+}
+
+/// Canonicalize provider settings before saving them to the database.
+///
+/// Both Hermes' YAML dictionary shape and CC Switch's ordered array shape are
+/// accepted on input. The stored representation is always an array so the TUI
+/// and database use one stable schema. Malformed entries are rejected instead
+/// of being silently discarded by the YAML writer.
+pub fn normalize_provider_settings_for_storage(
+    provider_id: &str,
+    config: &mut serde_json::Value,
+) -> Result<(), AppError> {
+    if !config.is_object() {
+        return Err(AppError::localized(
+            "provider.hermes.settings.not_object",
+            "Hermes 供应商配置必须是 JSON 对象",
+            "Hermes provider configuration must be a JSON object",
+        ));
+    }
+    sanitize_hermes_provider_keys(config);
+
+    let Some(models_value) = config
+        .as_object_mut()
+        .and_then(|settings| settings.get_mut("models"))
+    else {
+        return Ok(());
+    };
+    let models = match std::mem::take(models_value) {
+        serde_json::Value::Array(models) => models,
+        serde_json::Value::Object(models) => {
+            let mut array = Vec::with_capacity(models.len());
+            for (raw_id, value) in models {
+                let id = raw_id.trim();
+                if id.is_empty() {
+                    return Err(invalid_hermes_models(
+                        provider_id,
+                        "模型字典包含空白 ID",
+                        "the model dictionary contains a blank ID",
+                    ));
+                }
+                let mut model = match value {
+                    serde_json::Value::Object(model) => model,
+                    serde_json::Value::Null => serde_json::Map::new(),
+                    _ => {
+                        return Err(invalid_hermes_models(
+                            provider_id,
+                            &format!("模型 `{id}` 的值必须是对象"),
+                            &format!("model `{id}` must contain an object value"),
+                        ));
+                    }
+                };
+                model.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+                array.push(serde_json::Value::Object(model));
+            }
+            array
+        }
+        _ => {
+            return Err(invalid_hermes_models(
+                provider_id,
+                "models 必须是数组或对象字典",
+                "models must be an array or object dictionary",
+            ));
+        }
+    };
+    *models_value = serde_json::Value::Array(normalize_hermes_model_array(provider_id, models)?);
+    Ok(())
+}
+
+pub fn validate_provider_settings(
+    provider_id: &str,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    let mut normalized = config.clone();
+    normalize_provider_settings_for_storage(provider_id, &mut normalized)
+}
+
+/// Return canonical top-level fields that existed in the stored provider but
+/// were explicitly omitted by an update. Live-only fields are not present in
+/// the stored snapshot and therefore remain eligible for forward-compatible
+/// preservation by the YAML merge.
+pub(crate) fn removed_provider_fields(
+    previous: &serde_json::Value,
+    updated: &serde_json::Value,
+) -> Vec<String> {
+    let Some(previous) = previous.as_object() else {
+        return Vec::new();
+    };
+    let updated_keys: HashSet<&str> = updated
+        .as_object()
+        .into_iter()
+        .flat_map(|updated| updated.keys())
+        .map(|key| canonical_hermes_provider_key(key))
+        .collect();
+    let mut removed: Vec<String> = previous
+        .keys()
+        .map(|key| canonical_hermes_provider_key(key))
+        .filter(|key| {
+            !matches!(
+                *key,
+                "name" | "model" | "models" | PROVIDER_SOURCE_FIELD | "provider_key"
+            ) && !updated_keys.contains(*key)
+        })
+        .map(str::to_string)
+        .collect();
+    removed.sort();
+    removed.dedup();
+    removed
+}
+
 /// If `config.models` is a JSON array, convert it in-place to the dict shape.
 /// No-op when `models` is absent or already a dict.
 fn normalize_provider_models_for_write(config: &mut serde_json::Value) {
@@ -553,6 +741,15 @@ fn denormalize_provider_models_for_read(config: &mut serde_json::Value) {
         return;
     };
     if models_val.is_object() {
+        let has_invalid_entry = models_val.as_object().is_some_and(|models| {
+            models
+                .values()
+                .any(|value| !(value.is_object() || value.is_null()))
+        });
+        if has_invalid_entry {
+            log::warn!("Preserving malformed Hermes models dictionary so validation can report it");
+            return;
+        }
         let taken = std::mem::take(models_val);
         if let serde_json::Value::Object(map) = taken {
             *models_val = models_dict_to_array(map);
@@ -703,10 +900,16 @@ pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, App
                     entry.insert("api_key".to_string(), serde_json::json!(api_key));
                 }
                 if let Some(default_model) = model_section.get("default").and_then(|v| v.as_str()) {
-                    entry.insert("default_model".to_string(), serde_json::json!(default_model));
+                    entry.insert(
+                        "default_model".to_string(),
+                        serde_json::json!(default_model),
+                    );
                     // Also add as a single-model entry for the UI
                     let mut models = serde_json::Map::new();
-                    models.insert(default_model.to_string(), serde_json::json!({"name": default_model}));
+                    models.insert(
+                        default_model.to_string(),
+                        serde_json::json!({"name": default_model}),
+                    );
                     entry.insert("models".to_string(), serde_json::Value::Object(models));
                 }
                 entry.insert(
@@ -792,6 +995,17 @@ pub fn set_provider(
     name: &str,
     provider_config: serde_json::Value,
 ) -> Result<HermesWriteOutcome, AppError> {
+    set_provider_with_removed_fields(name, provider_config, &[])
+}
+
+/// Set a provider while honoring fields explicitly removed from the stored
+/// snapshot. Missing fields not listed here are still preserved from live YAML
+/// for forward compatibility with Hermes-managed settings.
+pub fn set_provider_with_removed_fields(
+    name: &str,
+    provider_config: serde_json::Value,
+    removed_fields: &[String],
+) -> Result<HermesWriteOutcome, AppError> {
     let _guard = hermes_write_lock().lock()?;
 
     let config = read_hermes_config()?;
@@ -805,7 +1019,11 @@ pub fn set_provider(
     // Rewrite any historical camelCase keys (e.g. from older DeepLink imports)
     // before touching models / YAML — avoids writing non-Hermes fields back.
     let mut normalized = provider_config;
-    sanitize_hermes_provider_keys(&mut normalized);
+    normalize_provider_settings_for_storage(name, &mut normalized)?;
+    let removed_fields: HashSet<&str> = removed_fields
+        .iter()
+        .map(|field| canonical_hermes_provider_key(field))
+        .collect();
     let models_were_explicit = normalized
         .as_object()
         .is_some_and(|provider| provider.contains_key("models"));
@@ -861,6 +1079,12 @@ pub fn set_provider(
             }
             for (k, v) in existing_map {
                 if models_were_explicit && matches!(k.as_str(), Some("model") | Some("models")) {
+                    continue;
+                }
+                if k.as_str()
+                    .map(canonical_hermes_provider_key)
+                    .is_some_and(|key| removed_fields.contains(key))
+                {
                     continue;
                 }
                 new_map.entry(k.clone()).or_insert_with(|| v.clone());
@@ -1563,6 +1787,27 @@ custom_providers:
 
     #[test]
     #[serial]
+    fn set_provider_rejects_malformed_models_without_rewriting_live_config() {
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: acme
+    model: keep
+    models:
+      keep: {}
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let result = set_provider("acme", serde_json::json!({ "models": [{ "id": " " }] }));
+            assert!(result.is_err());
+            assert_eq!(fs::read_to_string(&config_path).unwrap(), yaml);
+        });
+    }
+
+    #[test]
+    #[serial]
     fn set_provider_preserves_unknown_fields_for_retained_models_only() {
         with_test_home(|| {
             let yaml = "\
@@ -1752,6 +1997,26 @@ custom_providers:
             assert!(provider.get("baseUrl").is_none());
             assert!(provider.get("apiKey").is_none());
             assert!(provider.get("api").is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_preserves_malformed_model_dict_for_validation() {
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: malformed
+    models:
+      broken-model: not-an-object
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let providers = get_providers().expect("read malformed provider without data loss");
+            let models = &providers["malformed"]["models"];
+            assert_eq!(models["broken-model"], "not-an-object");
         });
     }
 

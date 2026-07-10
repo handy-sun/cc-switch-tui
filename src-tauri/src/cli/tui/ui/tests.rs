@@ -661,8 +661,8 @@ fn hermes_models_picker_and_editor_render_structured_fields() {
     let picker = all_text(&render(&app, &data));
     assert!(picker.contains("Hermes Models"), "{picker}");
     assert!(picker.contains("gpt-5"), "{picker}");
-    assert!(picker.contains("context 128000"), "{picker}");
-    assert!(picker.contains("output 8192"), "{picker}");
+    assert!(picker.contains("Context Limit 128000"), "{picker}");
+    assert!(picker.contains("Output Limit 8192"), "{picker}");
     assert!(picker.contains("a add"), "{picker}");
 
     app.on_key(key(KeyCode::Char('a')), &data);

@@ -457,8 +457,6 @@ impl ProviderAddFormState {
                 if models.is_empty() {
                     if self.hermes_models_touched {
                         settings_obj.insert("models".to_string(), Value::Array(Vec::new()));
-                    } else {
-                        settings_obj.remove("models");
                     }
                 } else {
                     settings_obj.insert("models".to_string(), Value::Array(models));

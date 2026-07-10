@@ -209,6 +209,17 @@ fn populate_openclaw_form(form: &mut ProviderAddFormState, provider: &Provider) 
 }
 
 fn populate_hermes_form(form: &mut ProviderAddFormState, provider: &Provider) {
+    let mut normalized = provider.clone();
+    let provider = if crate::hermes_config::normalize_provider_settings_for_storage(
+        &normalized.id,
+        &mut normalized.settings_config,
+    )
+    .is_ok()
+    {
+        &normalized
+    } else {
+        provider
+    };
     populate_openclaw_like_form(form, provider, true);
     for model in &mut form.openclaw_models {
         normalize_hermes_model_fields(model);
