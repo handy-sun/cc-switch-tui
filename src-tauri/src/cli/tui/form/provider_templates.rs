@@ -262,6 +262,7 @@ impl ProviderAddFormState {
                     self.gemini_model = defaults.gemini_model;
                     self.openclaw_user_agent = defaults.openclaw_user_agent;
                     self.openclaw_models = defaults.openclaw_models;
+                    self.hermes_models_touched = defaults.hermes_models_touched;
                     self.opencode_npm_package = defaults.opencode_npm_package;
                     self.opencode_api_key = defaults.opencode_api_key;
                     self.opencode_base_url = defaults.opencode_base_url;
@@ -427,7 +428,7 @@ impl ProviderAddFormState {
                         json!({
                             "id": "claude-opus-4-6",
                             "name": "Claude Opus 4.6",
-                            "contextWindow": 200000,
+                            "context_length": 200000,
                             "cost": {
                                 "input": 5,
                                 "output": 25,
@@ -436,7 +437,7 @@ impl ProviderAddFormState {
                         json!({
                             "id": "claude-sonnet-4-6",
                             "name": "Claude Sonnet 4.6",
-                            "contextWindow": 200000,
+                            "context_length": 200000,
                             "cost": {
                                 "input": 3,
                                 "output": 15,

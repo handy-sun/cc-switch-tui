@@ -1306,6 +1306,489 @@ custom_providers: []
 
 #[test]
 #[serial]
+fn hermes_switch_normalizes_legacy_model_parameter_aliases() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(&config_path, "custom_providers: []\n").expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "legacy".to_string(),
+            Provider::with_id(
+                "legacy".to_string(),
+                "Legacy Hermes".to_string(),
+                json!({
+                    "base_url": "https://hermes.example/v1",
+                    "api_key": "sk-hermes",
+                    "models": [{
+                        "id": "legacy-model",
+                        "contextLength": 128000,
+                        "maxTokens": 8192,
+                        "reasoning_effort": "high"
+                    }]
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    ProviderService::switch(&state, AppType::Hermes, "legacy")
+        .expect("switch legacy Hermes provider");
+
+    let yaml = crate::hermes_config::read_hermes_config().expect("read Hermes config");
+    let model = yaml
+        .get("custom_providers")
+        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(|providers| providers.first())
+        .and_then(|provider| provider.get("models"))
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|models| models.get("legacy-model"))
+        .expect("legacy model should be written");
+
+    assert_eq!(
+        model.get("context_length").and_then(|value| value.as_u64()),
+        Some(128000)
+    );
+    assert_eq!(
+        model.get("max_tokens").and_then(|value| value.as_u64()),
+        Some(8192)
+    );
+    assert_eq!(
+        model
+            .get("reasoning_effort")
+            .and_then(|value| value.as_str()),
+        Some("high")
+    );
+    assert!(model.get("contextLength").is_none());
+    assert!(model.get("contextWindow").is_none());
+    assert!(model.get("maxTokens").is_none());
+}
+
+#[test]
+#[serial]
+fn hermes_update_persists_structured_model_parameters_to_db_and_live_config() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(&config_path, "custom_providers: []\n").expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "structured".to_string(),
+            Provider::with_id(
+                "structured".to_string(),
+                "Structured Hermes".to_string(),
+                json!({
+                    "base_url": "https://old.example/v1",
+                    "api_key": "sk-old",
+                    "models": [{ "id": "old-model" }]
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+    let updated = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({
+            "base_url": "https://hermes.example/v1",
+            "api_key": "sk-hermes-test",
+            "headers": { "X-Test": "preserved" },
+            "models": [{
+                "id": "gpt-5",
+                "context_length": 128000,
+                "max_tokens": 8192,
+                "reasoning_effort": "high"
+            }]
+        }),
+        None,
+    );
+
+    ProviderService::update(&state, AppType::Hermes, updated).expect("update Hermes provider");
+
+    let stored = state
+        .db
+        .get_provider_by_id("structured", AppType::Hermes.as_str())
+        .expect("read stored Hermes provider")
+        .expect("stored Hermes provider should exist");
+    let stored_model = stored.settings_config["models"]
+        .as_array()
+        .and_then(|models| models.first())
+        .expect("stored model should remain an array entry");
+    assert_eq!(stored_model["context_length"], 128000);
+    assert_eq!(stored_model["max_tokens"], 8192);
+    assert_eq!(stored_model["reasoning_effort"], "high");
+    assert!(stored_model.get("contextWindow").is_none());
+    assert!(stored_model.get("maxTokens").is_none());
+    assert_eq!(stored.settings_config["headers"]["X-Test"], "preserved");
+
+    let yaml = crate::hermes_config::read_hermes_config().expect("read Hermes config");
+    let live_provider = yaml
+        .get("custom_providers")
+        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(|providers| {
+            providers.iter().find(|provider| {
+                provider.get("name").and_then(serde_yaml::Value::as_str) == Some("structured")
+            })
+        })
+        .expect("updated provider should be written to config.yaml");
+    let live_model = live_provider
+        .get("models")
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|models| models.get("gpt-5"))
+        .expect("structured model should be written by ID");
+    assert_eq!(
+        live_model
+            .get("context_length")
+            .and_then(serde_yaml::Value::as_u64),
+        Some(128000)
+    );
+    assert_eq!(
+        live_model
+            .get("max_tokens")
+            .and_then(serde_yaml::Value::as_u64),
+        Some(8192)
+    );
+    assert_eq!(
+        live_model
+            .get("reasoning_effort")
+            .and_then(serde_yaml::Value::as_str),
+        Some("high")
+    );
+    assert_eq!(
+        live_provider
+            .get("headers")
+            .and_then(|headers| headers.get("X-Test"))
+            .and_then(serde_yaml::Value::as_str),
+        Some("preserved")
+    );
+    assert!(live_model.get("contextWindow").is_none());
+    assert!(live_model.get("maxTokens").is_none());
+
+    let cleared = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({
+            "base_url": "https://hermes.example/v1",
+            "api_key": "sk-hermes-test",
+            "headers": { "X-Test": "preserved" },
+            "models": []
+        }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, cleared)
+        .expect("clear Hermes provider models");
+
+    let stored = state
+        .db
+        .get_provider_by_id("structured", AppType::Hermes.as_str())
+        .expect("read cleared Hermes provider")
+        .expect("cleared Hermes provider should exist");
+    assert_eq!(stored.settings_config["models"], json!([]));
+
+    let yaml = crate::hermes_config::read_hermes_config().expect("read cleared Hermes config");
+    let live_provider = yaml
+        .get("custom_providers")
+        .and_then(serde_yaml::Value::as_sequence)
+        .and_then(|providers| {
+            providers.iter().find(|provider| {
+                provider.get("name").and_then(serde_yaml::Value::as_str) == Some("structured")
+            })
+        })
+        .expect("cleared provider should remain in config.yaml");
+    assert!(live_provider.get("model").is_none());
+    assert!(live_provider.get("models").is_none());
+}
+
+#[test]
+#[serial]
+fn hermes_update_current_provider_refreshes_live_model_defaults() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+model:
+  provider: structured
+  default: old-model
+  base_url: https://old.example/v1
+  api_key: sk-old
+custom_providers:
+  - name: structured
+    base_url: https://old.example/v1
+    api_key: sk-old
+    model: old-model
+    models:
+      old-model: {}
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "structured".to_string(),
+            Provider::with_id(
+                "structured".to_string(),
+                "Structured Hermes".to_string(),
+                json!({
+                    "base_url": "https://old.example/v1",
+                    "api_key": "sk-old",
+                    "models": [{ "id": "old-model" }]
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({
+            "base_url": "https://new.example/v1",
+            "api_key": "sk-new",
+            "models": [{ "id": "new-model" }]
+        }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated)
+        .expect("update current Hermes provider");
+
+    let model = crate::hermes_config::get_model_config()
+        .expect("read Hermes model config")
+        .expect("Hermes model config should remain present");
+    assert_eq!(model.provider.as_deref(), Some("structured"));
+    assert_eq!(model.default.as_deref(), Some("new-model"));
+    assert_eq!(model.base_url.as_deref(), Some("https://new.example/v1"));
+    assert_eq!(
+        model.extra.get("api_key").and_then(|value| value.as_str()),
+        Some("sk-new")
+    );
+
+    let cleared = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({ "models": [{ "id": "new-model" }] }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, cleared)
+        .expect("clear current Hermes credentials");
+    let model = crate::hermes_config::get_model_config()
+        .expect("read cleared Hermes model config")
+        .expect("Hermes model config should remain present");
+    assert!(model.base_url.is_none());
+    assert!(model.extra.get("api_key").is_none());
+}
+
+#[test]
+#[serial]
+fn hermes_update_non_current_provider_keeps_active_model_defaults() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+model:
+  provider: active
+  default: active-model
+  base_url: https://active.example/v1
+  api_key: sk-active
+custom_providers:
+  - name: active
+    models:
+      active-model: {}
+  - name: other
+    models:
+      old-other-model: {}
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    let manager = config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager");
+    manager.providers.insert(
+        "active".to_string(),
+        Provider::with_id(
+            "active".to_string(),
+            "Active Hermes".to_string(),
+            json!({ "models": [{ "id": "active-model" }] }),
+            None,
+        ),
+    );
+    manager.providers.insert(
+        "other".to_string(),
+        Provider::with_id(
+            "other".to_string(),
+            "Other Hermes".to_string(),
+            json!({ "models": [{ "id": "old-other-model" }] }),
+            None,
+        ),
+    );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "other".to_string(),
+        "Other Hermes".to_string(),
+        json!({ "models": [{ "id": "new-other-model" }] }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated)
+        .expect("update non-current Hermes provider");
+
+    let model = crate::hermes_config::get_model_config()
+        .expect("read Hermes model config")
+        .expect("Hermes model config should remain present");
+    assert_eq!(model.provider.as_deref(), Some("active"));
+    assert_eq!(model.default.as_deref(), Some("active-model"));
+    assert_eq!(model.base_url.as_deref(), Some("https://active.example/v1"));
+    assert_eq!(
+        model.extra.get("api_key").and_then(|value| value.as_str()),
+        Some("sk-active")
+    );
+}
+
+#[test]
+#[serial]
+fn hermes_update_can_remove_top_level_fields_without_stripping_live_only_fields() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+custom_providers:
+  - name: structured
+    base_url: https://old.example/v1
+    api_key: sk-old
+    headers:
+      X-Remove: old
+    request_timeout_seconds: 300
+    live_only: keep-me
+    model: keep-model
+    models:
+      keep-model: {}
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "structured".to_string(),
+            Provider::with_id(
+                "structured".to_string(),
+                "Structured Hermes".to_string(),
+                json!({
+                    "base_url": "https://old.example/v1",
+                    "api_key": "sk-old",
+                    "headers": { "X-Remove": "old" },
+                    "request_timeout_seconds": 300,
+                    "models": [{ "id": "keep-model" }]
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "structured".to_string(),
+        "Structured Hermes".to_string(),
+        json!({ "models": [{ "id": "keep-model" }] }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated)
+        .expect("remove Hermes provider fields");
+
+    let stored = state
+        .db
+        .get_provider_by_id("structured", AppType::Hermes.as_str())
+        .expect("read stored provider")
+        .expect("stored provider should exist");
+    assert!(stored.settings_config.get("base_url").is_none());
+    assert!(stored.settings_config.get("api_key").is_none());
+    assert!(stored.settings_config.get("headers").is_none());
+    assert!(stored
+        .settings_config
+        .get("request_timeout_seconds")
+        .is_none());
+
+    let live = crate::hermes_config::get_provider("structured")
+        .expect("read live provider")
+        .expect("live provider should exist");
+    assert!(live.get("base_url").is_none());
+    assert!(live.get("api_key").is_none());
+    assert!(live.get("headers").is_none());
+    assert!(live.get("request_timeout_seconds").is_none());
+    assert_eq!(live["live_only"], "keep-me");
+}
+
+#[test]
+fn hermes_provider_validation_rejects_malformed_models() {
+    let invalid_models = [
+        json!("not-a-list-or-dict"),
+        json!(["not-an-object"]),
+        json!([{ "id": " " }]),
+        json!([{ "id": "duplicate" }, { "id": "duplicate" }]),
+        json!([{ "id": "zero-context", "context_length": 0 }]),
+        json!([{ "id": "fractional-output", "max_tokens": 1.5 }]),
+    ];
+
+    for models in invalid_models {
+        let provider = Provider::with_id(
+            "invalid".to_string(),
+            "Invalid Hermes".to_string(),
+            json!({ "models": models }),
+            None,
+        );
+        assert!(
+            ProviderService::validate_provider_settings(&AppType::Hermes, &provider).is_err(),
+            "Hermes models should be rejected: {}",
+            provider.settings_config["models"]
+        );
+    }
+}
+
+#[test]
+#[serial]
 fn current_prefers_effective_current_from_local_settings_without_mutating_config() {
     let temp_home = TempDir::new().expect("create temp home");
     let _env = EnvGuard::set_home(temp_home.path());
@@ -4250,7 +4733,7 @@ fn codex_switch_syncs_all_managed_provider_catalog_entries_into_live_config() {
                 "p2".to_string(),
                 "Second".to_string(),
                 codex_settings(
-                    "model_provider = \"second\"\nmodel = \"gpt-4\"\n\n[model_providers.second]\nname = \"Second\"\nbase_url = \"https://api.two.example/v1\"\n",
+                    "model_provider = \"second\"\nmodel = \"gpt-4\"\n\n[model_providers.jdyun]\nname = \"jdyun\"\nbase_url = \"https://jd.example/v1\"\n\n[model_providers.second]\nname = \"Second\"\nbase_url = \"https://api.two.example/v1\"\n",
                 ),
                 None,
             ),
@@ -4280,6 +4763,216 @@ fn codex_switch_syncs_all_managed_provider_catalog_entries_into_live_config() {
         live_text.contains("[model_providers.second]"),
         "live config should expose the current provider catalog entry too: {live_text}"
     );
+    assert!(
+        !live_text.contains("[model_providers.jdyun]"),
+        "live config should remove catalog entries with no saved provider owner: {live_text}"
+    );
+}
+
+#[test]
+#[serial]
+fn codex_switch_isolates_saved_provider_snapshot_from_live_catalog() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+    std::fs::create_dir_all(crate::codex_config::get_codex_config_dir())
+        .expect("create ~/.codex (initialized)");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Codex);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "krill".to_string();
+        manager.providers.insert(
+            "krill".to_string(),
+            Provider::with_id(
+                "krill".to_string(),
+                "krill".to_string(),
+                codex_settings(
+                    "model_provider = \"krill\"\nmodel = \"gpt-5.4\"\n\n[model_providers.krill]\nname = \"krill\"\nbase_url = \"https://krill.example/v1\"\n",
+                ),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "zhima".to_string(),
+            Provider::with_id(
+                "zhima".to_string(),
+                "zhima-cx".to_string(),
+                codex_settings(
+                    "model_provider = \"zhima-cx\"\nmodel = \"gpt-5.4\"\n\n[model_providers.zhima-cx]\nname = \"zhima-cx\"\nbase_url = \"https://zhima.example/v1\"\n",
+                ),
+                None,
+            ),
+        );
+    }
+
+    std::fs::write(
+        get_codex_config_path(),
+        r#"model_provider = "krill"
+model = "gpt-5.4"
+
+[model_providers.jdyun]
+name = "jdyun"
+base_url = "https://jd.example/v1"
+
+[model_providers.krill]
+name = "krill"
+base_url = "https://krill.example/v1"
+"#,
+    )
+    .expect("seed polluted live config.toml");
+    write_json_file(
+        &get_codex_auth_path(),
+        &json!({ "OPENAI_API_KEY": "sk-krill" }),
+    )
+    .expect("write auth.json");
+
+    let state = state_from_config(config);
+    ProviderService::switch(&state, AppType::Codex, "zhima").expect("switch should succeed");
+
+    let krill = state
+        .db
+        .get_provider_by_id("krill", AppType::Codex.as_str())
+        .expect("read krill provider")
+        .expect("krill provider exists");
+    let stored = codex_config_text(&krill.settings_config);
+    assert!(stored.contains("[model_providers.krill]"));
+    assert!(
+        !stored.contains("[model_providers.jdyun]"),
+        "saved provider snapshots must not absorb unrelated live catalog entries: {stored}"
+    );
+}
+
+#[test]
+#[serial]
+fn update_codex_provider_reconciles_pending_display_name_rename() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+    std::fs::create_dir_all(crate::codex_config::get_codex_config_dir())
+        .expect("create ~/.codex (initialized)");
+
+    let provider_id = "0bd77868-43c1-456c-b718-ad4386253453";
+    let mut provider = Provider::with_id(
+        provider_id.to_string(),
+        "zhima-cx-pro".to_string(),
+        codex_settings(
+            "model_provider = \"zhima-cx\"\nmodel = \"gpt-5.4\"\n\n[model_providers.zhima-cx]\nname = \"zhima-cx\"\nbase_url = \"https://zhima.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+        ),
+        None,
+    );
+    provider
+        .meta
+        .get_or_insert_with(Default::default)
+        .codex_model_provider_key = Some("zhima-cx".to_string());
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Codex);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = provider_id.to_string();
+        manager
+            .providers
+            .insert(provider_id.to_string(), provider.clone());
+    }
+
+    std::fs::write(
+        get_codex_config_path(),
+        codex_config_text(&provider.settings_config),
+    )
+    .expect("seed live config.toml");
+    write_json_file(
+        &get_codex_auth_path(),
+        &json!({ "OPENAI_API_KEY": "sk-zhima" }),
+    )
+    .expect("write auth.json");
+
+    let state = state_from_config(config);
+    let mut updated = provider;
+    updated.notes = Some("saved after rename".to_string());
+    ProviderService::update(&state, AppType::Codex, updated).expect("update should succeed");
+
+    let saved = state
+        .db
+        .get_provider_by_id(provider_id, AppType::Codex.as_str())
+        .expect("read saved provider")
+        .expect("saved provider exists");
+    assert_eq!(
+        saved.id, provider_id,
+        "internal provider id must remain stable"
+    );
+    assert_eq!(
+        ProviderService::provider_codex_model_provider_key(&saved).as_deref(),
+        Some("zhima-cx-pro")
+    );
+    let stored = codex_config_text(&saved.settings_config);
+    assert!(stored.contains("model_provider = \"zhima-cx-pro\""));
+    assert!(stored.contains("[model_providers.zhima-cx-pro]"));
+    assert!(stored.contains("name = \"zhima-cx-pro\""));
+    assert!(!stored.contains("[model_providers.zhima-cx]"));
+
+    let live = std::fs::read_to_string(get_codex_config_path()).expect("read live config.toml");
+    assert!(live.contains("model_provider = \"zhima-cx-pro\""));
+    assert!(live.contains("[model_providers.zhima-cx-pro]"));
+    assert!(!live.contains("[model_providers.zhima-cx]"));
+}
+
+#[test]
+fn codex_provider_rename_preserves_explicitly_decoupled_external_key() {
+    let mut existing = Provider::with_id(
+        "vendor".to_string(),
+        "Friendly Old".to_string(),
+        codex_settings(
+            "model_provider = \"vendor-key\"\n\n[model_providers.vendor-key]\nname = \"Vendor API\"\nbase_url = \"https://vendor.example/v1\"\n",
+        ),
+        None,
+    );
+    existing
+        .meta
+        .get_or_insert_with(Default::default)
+        .codex_model_provider_key = Some("vendor-key".to_string());
+    let mut manager = crate::provider::ProviderManager::default();
+    manager
+        .providers
+        .insert(existing.id.clone(), existing.clone());
+
+    let mut updated = existing.clone();
+    updated.name = "Friendly New".to_string();
+    ProviderService::reconcile_codex_provider_name_key(&manager, &existing, &mut updated)
+        .expect("decoupled provider rename should remain valid");
+
+    assert_eq!(
+        ProviderService::provider_codex_model_provider_key(&updated).as_deref(),
+        Some("vendor-key")
+    );
+    assert!(codex_config_text(&updated.settings_config).contains("[model_providers.vendor-key]"));
+}
+
+#[test]
+fn codex_storage_normalization_isolates_selected_provider_table() {
+    let provider = Provider::with_id(
+        "zhima".to_string(),
+        "zhima-cx".to_string(),
+        codex_settings(
+            "model_provider = \"zhima-cx\"\n\n[model_providers.jdyun]\nname = \"jdyun\"\nbase_url = \"https://jd.example/v1\"\n\n[model_providers.zhima-cx]\nname = \"zhima-cx\"\nbase_url = \"https://zhima.example/v1\"\n",
+        ),
+        None,
+    );
+
+    let normalized = ProviderService::normalize_settings_config_for_storage(
+        &AppType::Codex,
+        &provider,
+        provider.settings_config.clone(),
+        None,
+    )
+    .expect("normalize Codex provider snapshot");
+    let stored = codex_config_text(&normalized);
+
+    assert!(stored.contains("[model_providers.zhima-cx]"));
+    assert!(!stored.contains("[model_providers.jdyun]"));
 }
 
 #[test]

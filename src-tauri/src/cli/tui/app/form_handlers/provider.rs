@@ -303,6 +303,12 @@ impl App {
                 }
                 Action::None
             }
+            ProviderAddField::HermesModels => {
+                if matches!(key.code, KeyCode::Enter) {
+                    self.overlay = Overlay::HermesModelsPicker { selected: 0 };
+                }
+                Action::None
+            }
             ProviderAddField::CommonSnippet => {
                 if matches!(key.code, KeyCode::Enter) {
                     let Some(FormState::ProviderAdd(provider)) = self.form.as_ref() else {

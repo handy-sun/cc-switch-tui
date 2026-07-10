@@ -37,6 +37,7 @@ pub(crate) use app_state::{
 };
 pub use editor_state::{EditorKind, EditorMode, EditorState, EditorSubmit};
 pub(crate) use helpers::*;
+pub(crate) use types::HermesModelEditorField;
 pub use types::{
     ConfirmAction, ConfirmOverlay, FilterState, Focus, LoadingKind, Overlay, TextInputState,
     TextSubmit, TextViewAction, TextViewState, Toast, ToastKind,

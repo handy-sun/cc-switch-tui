@@ -346,7 +346,7 @@ pub fn set_codex_config_text_in_settings(
 }
 
 pub fn normalize_codex_settings_config_for_storage(settings: &mut Value) -> Result<(), AppError> {
-    let config_toml = codex_config_text_from_settings(settings)?;
+    let config_toml = isolate_selected_codex_provider(&codex_config_text_from_settings(settings)?)?;
     if !config_toml.trim().is_empty()
         && !config_toml.lines().any(|line| {
             let line = line.trim();
@@ -406,6 +406,49 @@ pub fn strip_codex_provider_config_text(config_toml: &str) -> Result<String, App
     }
 
     Ok(cleaned.trim().to_string())
+}
+
+pub fn isolate_selected_codex_provider(config_text: &str) -> Result<String, AppError> {
+    let config_text = config_text.trim();
+    if config_text.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Config(format!("TOML parse error: {e}")))?;
+    let selected = active_codex_model_provider_id(&doc);
+
+    let Some(selected) = selected else {
+        doc.as_table_mut().remove("model_providers");
+        return Ok(doc.to_string());
+    };
+    let Some(providers) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+    else {
+        return Ok(doc.to_string());
+    };
+    if providers.get(&selected).is_none() {
+        if !is_custom_codex_model_provider_id(&selected) {
+            doc.as_table_mut().remove("model_providers");
+            return Ok(doc.to_string());
+        }
+        return Err(AppError::Config(format!(
+            "Codex model_provider `{selected}` is missing from model_providers"
+        )));
+    }
+
+    let stale_keys = providers
+        .iter()
+        .map(|(key, _)| key.to_string())
+        .filter(|key| key != &selected)
+        .collect::<Vec<_>>();
+    for key in stale_keys {
+        providers.remove(&key);
+    }
+
+    Ok(doc.to_string())
 }
 
 /// 读取并校验 `~/.codex/config.toml`，返回文本（可能为空）
@@ -804,7 +847,7 @@ pub fn rewrite_codex_config_model_provider_key(
         return Ok(String::new());
     }
 
-    let target_provider_id = clean_codex_provider_key(target_provider_id);
+    let target_provider_id = clean_codex_provider_display_key(target_provider_id);
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
@@ -836,6 +879,57 @@ pub fn rewrite_codex_config_model_provider_key(
     Ok(doc.to_string())
 }
 
+pub fn rewrite_codex_config_model_provider_name(
+    config_text: &str,
+    provider_key: &str,
+    provider_name: &str,
+) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let provider = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .and_then(|providers| providers.get_mut(provider_key))
+        .and_then(|item| item.as_table_like_mut())
+        .ok_or_else(|| {
+            AppError::Config(format!(
+                "Codex provider `{provider_key}` is missing from model_providers"
+            ))
+        })?;
+    provider.insert("name", toml_edit::value(provider_name));
+    Ok(doc.to_string())
+}
+
+pub fn selected_codex_provider_base_url(config_text: &str) -> Result<Option<String>, AppError> {
+    let config_text = config_text.trim();
+    if config_text.is_empty() {
+        return Ok(None);
+    }
+
+    let table = toml::from_str::<toml::Table>(config_text)
+        .map_err(|source| AppError::toml(Path::new("config.toml"), source))?;
+    let selected_url = table
+        .get("model_provider")
+        .and_then(toml::Value::as_str)
+        .and_then(|key| table.get("model_providers")?.as_table()?.get(key))
+        .and_then(toml::Value::as_table)
+        .and_then(|provider| provider.get("base_url"))
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_string);
+
+    Ok(selected_url.or_else(|| {
+        table
+            .get("base_url")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_string)
+    }))
+}
+
 /// Generate a clean TOML key from a raw string for use as `model_provider` and `[model_providers.<key>]`.
 ///
 /// Lowercases ASCII alphanumerics, replaces everything else with `_`, trims leading/trailing `_`.
@@ -856,6 +950,34 @@ pub fn clean_codex_provider_key(raw: &str) -> String {
         key.remove(0);
     }
     while key.ends_with('_') {
+        key.pop();
+    }
+
+    if key.is_empty() {
+        "custom".to_string()
+    } else {
+        key
+    }
+}
+
+pub fn clean_codex_provider_display_key(raw: &str) -> String {
+    let mut key: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else if c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    while key.starts_with(['-', '_']) {
+        key.remove(0);
+    }
+    while key.ends_with(['-', '_']) {
         key.pop();
     }
 
@@ -1570,6 +1692,14 @@ base_url = "https://aihubmix.example/v1"
                 .and_then(|v| v.get("model_provider"))
                 .and_then(|v| v.as_str()),
             Some("aihubmix")
+        );
+    }
+
+    #[test]
+    fn clean_codex_provider_display_key_preserves_hyphens() {
+        assert_eq!(
+            clean_codex_provider_display_key("zhima-cx-pro"),
+            "zhima-cx-pro"
         );
     }
 }

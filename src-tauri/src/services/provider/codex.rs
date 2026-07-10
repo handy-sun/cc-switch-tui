@@ -219,6 +219,22 @@ impl ProviderService {
             })
     }
 
+    fn provider_codex_model_provider_name(provider: &Provider) -> Option<String> {
+        let config =
+            crate::codex_config::codex_config_text_from_settings(&provider.settings_config).ok()?;
+        let key = Self::provider_codex_model_provider_key(provider)?;
+        let doc = config.parse::<toml_edit::DocumentMut>().ok()?;
+        doc.get("model_providers")
+            .and_then(|item| item.as_table_like())
+            .and_then(|providers| providers.get(&key))
+            .and_then(|item| item.as_table_like())
+            .and_then(|provider| provider.get("name"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+    }
+
     fn compact_codex_key_suffix(raw: &str) -> String {
         raw.chars()
             .filter(|ch| ch.is_ascii_alphanumeric())
@@ -282,7 +298,7 @@ impl ProviderService {
         provider: &mut Provider,
         target_key: &str,
     ) -> Result<bool, AppError> {
-        let target_key = crate::codex_config::clean_codex_provider_key(target_key);
+        let target_key = crate::codex_config::clean_codex_provider_display_key(target_key);
         let current_key = Self::provider_codex_model_provider_key(provider);
         let mut changed = current_key.as_deref() != Some(target_key.as_str());
 
@@ -317,6 +333,74 @@ impl ProviderService {
             .codex_model_provider_key = Some(target_key);
 
         Ok(changed)
+    }
+
+    pub(super) fn reconcile_codex_provider_name_key(
+        manager: &crate::provider::ProviderManager,
+        existing: &Provider,
+        updated: &mut Provider,
+    ) -> Result<(), AppError> {
+        if Self::is_codex_official_provider(updated) {
+            return Ok(());
+        }
+
+        let Some(old_key) = Self::provider_codex_model_provider_key(existing) else {
+            return Ok(());
+        };
+        let updated_name = updated.name.trim().to_string();
+        if updated_name.is_empty() {
+            return Ok(());
+        }
+        let target_key = crate::codex_config::clean_codex_provider_display_key(&updated_name);
+        if old_key == target_key {
+            return Ok(());
+        }
+
+        let display_name_changed = existing.name.trim() != updated.name.trim();
+        let table_name_is_default_key =
+            Self::provider_codex_model_provider_name(existing).as_deref() == Some(old_key.as_str());
+        let key_followed_old_display_name =
+            old_key == crate::codex_config::clean_codex_provider_display_key(existing.name.trim());
+        let should_rewrite = (display_name_changed && key_followed_old_display_name)
+            || (!display_name_changed && table_name_is_default_key);
+        if !should_rewrite {
+            return Ok(());
+        }
+
+        if let Some(owner) = manager.providers.values().find(|provider| {
+            provider.id != updated.id
+                && Self::provider_codex_model_provider_key(provider).as_deref()
+                    == Some(target_key.as_str())
+        }) {
+            return Err(AppError::Config(format!(
+                "Codex provider key `{target_key}` is already owned by `{}`",
+                owner.id
+            )));
+        }
+
+        Self::rewrite_provider_codex_model_provider_key(updated, &target_key)?;
+        let config =
+            crate::codex_config::codex_config_text_from_settings(&updated.settings_config)?;
+        let renamed = crate::codex_config::rewrite_codex_config_model_provider_name(
+            &config,
+            &target_key,
+            &updated_name,
+        )?;
+        let prefer_structured = updated
+            .settings_config
+            .get(crate::codex_config::CODEX_STRUCTURED_CONFIG_KEY)
+            .is_some()
+            && updated
+                .settings_config
+                .get(crate::codex_config::CODEX_LEGACY_CONFIG_KEY)
+                .is_none();
+        crate::codex_config::set_codex_config_text_in_settings(
+            &mut updated.settings_config,
+            &renamed,
+            prefer_structured,
+        )?;
+
+        Ok(())
     }
 
     fn repair_conflicting_custom_codex_provider_keys(
@@ -552,6 +636,25 @@ impl ProviderService {
                 .map_err(|e| AppError::Config(format!("Codex live config TOML 无法解析: {e}")))?
         };
 
+        let active_alias = doc
+            .get("model_provider")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .filter(|key| !catalog_entries.contains_key(key))
+            .filter(|key| !stale_keys.contains(key))
+            .and_then(|key| {
+                let item = doc
+                    .get("model_providers")
+                    .and_then(|value| value.as_table_like())
+                    .and_then(|providers| providers.get(&key))?
+                    .clone();
+                let signature = Self::codex_catalog_item_signature(&item);
+                catalog_entries
+                    .values()
+                    .any(|managed| Self::codex_catalog_item_signature(managed) == signature)
+                    .then_some((key, item))
+            });
+
         if doc.get("model_providers").is_none() {
             doc["model_providers"] = toml_edit::Item::Table(toml_edit::Table::new());
         }
@@ -559,11 +662,18 @@ impl ProviderService {
             AppError::Config("Codex live `model_providers` 必须是 TOML table".into())
         })?;
 
-        for stale_key in stale_keys {
-            providers.remove(stale_key);
+        let existing_keys = providers
+            .iter()
+            .map(|(key, _)| key.to_string())
+            .collect::<Vec<_>>();
+        for key in existing_keys {
+            providers.remove(&key);
         }
         for (key, item) in catalog_entries {
             providers.insert(key, item.clone());
+        }
+        if let Some((key, item)) = active_alias {
+            providers.insert(&key, item);
         }
 
         if providers.iter().next().is_none() {

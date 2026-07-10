@@ -41,7 +41,8 @@ pub(crate) fn add_form_key_items(
                     Some(
                         ProviderAddField::ClaudeModelConfig
                         | ProviderAddField::CommonSnippet
-                        | ProviderAddField::OpenClawModels,
+                        | ProviderAddField::OpenClawModels
+                        | ProviderAddField::HermesModels,
                     ) => texts::tui_key_open(),
                     Some(
                         ProviderAddField::GeminiAuthType

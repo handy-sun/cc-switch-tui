@@ -164,6 +164,23 @@ impl McpEnvEntryEditorState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HermesModelEditorField {
+    Id,
+    ContextLength,
+    MaxTokens,
+}
+
+#[derive(Debug, Clone)]
+pub struct HermesModelEntryEditorState {
+    pub row: Option<usize>,
+    pub return_selected: usize,
+    pub field: HermesModelEditorField,
+    pub id: crate::cli::tui::form::TextInput,
+    pub context_length: crate::cli::tui::form::TextInput,
+    pub max_tokens: crate::cli::tui::form::TextInput,
+}
+
 #[derive(Debug, Clone)]
 pub enum Overlay {
     None,
@@ -254,6 +271,10 @@ pub enum Overlay {
     McpEnvPicker {
         selected: usize,
     },
+    HermesModelsPicker {
+        selected: usize,
+    },
+    HermesModelEntryEditor(HermesModelEntryEditorState),
     McpTypePicker {
         selected: usize,
     },

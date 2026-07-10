@@ -1,6 +1,7 @@
 use super::*;
 
 mod dialogs;
+mod hermes_models;
 mod mcp_env;
 mod pickers;
 mod views;
@@ -20,6 +21,10 @@ impl App {
         }
 
         if let Some(action) = self.handle_mcp_env_overlay_key(key) {
+            return action;
+        }
+
+        if let Some(action) = self.handle_hermes_models_overlay_key(key) {
             return action;
         }
 
