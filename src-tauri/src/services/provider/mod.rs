@@ -66,6 +66,7 @@ struct PostCommitAction {
     app_type: AppType,
     provider: Provider,
     backup: LiveSnapshot,
+    rollback_live_on_failure: bool,
     write_live_snapshot: bool,
     sync_mcp: bool,
     sync_codex_catalog: bool,
@@ -87,6 +88,40 @@ struct PostCommitAction {
 struct HermesProviderRename {
     old_id: String,
     new_id: String,
+}
+
+fn provider_transaction_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[cfg(test)]
+type ProviderPostCommitTestHook = Box<dyn FnOnce() + Send + 'static>;
+
+#[cfg(test)]
+fn provider_post_commit_test_hook() -> &'static std::sync::Mutex<Option<ProviderPostCommitTestHook>>
+{
+    static HOOK: std::sync::OnceLock<std::sync::Mutex<Option<ProviderPostCommitTestHook>>> =
+        std::sync::OnceLock::new();
+    HOOK.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+fn set_provider_post_commit_test_hook(hook: ProviderPostCommitTestHook) {
+    *provider_post_commit_test_hook()
+        .lock()
+        .expect("provider post-commit test hook lock") = Some(hook);
+}
+
+#[cfg(test)]
+fn run_provider_post_commit_test_hook() {
+    let hook = provider_post_commit_test_hook()
+        .lock()
+        .expect("provider post-commit test hook lock")
+        .take();
+    if let Some(hook) = hook {
+        hook();
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -262,6 +297,7 @@ impl ProviderService {
     where
         F: FnOnce(&mut MultiAppConfig) -> Result<(R, Option<PostCommitAction>), AppError>,
     {
+        let _transaction_guard = provider_transaction_lock().lock()?;
         let mut guard = state.config.write().map_err(AppError::from)?;
         let original = guard.clone();
         let (result, action) = match f(&mut guard) {
@@ -286,9 +322,12 @@ impl ProviderService {
 
         if let Some(action) = action {
             if let Err(err) = Self::apply_post_commit(state, &action) {
-                if let Err(rollback_err) =
+                let rollback = if action.rollback_live_on_failure {
                     Self::rollback_after_failure(state, original.clone(), action.backup.clone())
-                {
+                } else {
+                    Self::restore_config_only(state, original.clone())
+                };
+                if let Err(rollback_err) = rollback {
                     return Err(AppError::localized(
                         "post_commit.rollback_failed",
                         format!("后置操作失败: {err}；回滚失败: {rollback_err}"),
@@ -310,6 +349,7 @@ impl ProviderService {
     where
         F: FnOnce(&mut MultiAppConfig) -> Result<(R, Option<PostCommitAction>), AppError>,
     {
+        let _transaction_guard = provider_transaction_lock().lock()?;
         let mut guard = state.config.write().map_err(AppError::from)?;
         let original = guard.clone();
         let (result, action) = match f(&mut guard) {
@@ -338,12 +378,21 @@ impl ProviderService {
 
         if let Some(action) = action {
             if let Err(err) = Self::apply_post_commit(state, &action) {
-                if let Err(rollback_err) = Self::rollback_after_failure_preserving_current_providers(
-                    state,
-                    original.clone(),
-                    preserved_current_apps,
-                    action.backup.clone(),
-                ) {
+                let rollback = if action.rollback_live_on_failure {
+                    Self::rollback_after_failure_preserving_current_providers(
+                        state,
+                        original.clone(),
+                        preserved_current_apps,
+                        action.backup.clone(),
+                    )
+                } else {
+                    Self::restore_config_only_preserving_current_providers(
+                        state,
+                        original.clone(),
+                        preserved_current_apps,
+                    )
+                };
+                if let Err(rollback_err) = rollback {
                     return Err(AppError::localized(
                         "post_commit.rollback_failed",
                         format!("后置操作失败: {err}；回滚失败: {rollback_err}"),
@@ -402,6 +451,8 @@ impl ProviderService {
 
     fn apply_post_commit(state: &AppState, action: &PostCommitAction) -> Result<(), AppError> {
         if let Some(rename) = &action.hermes_provider_rename {
+            #[cfg(test)]
+            run_provider_post_commit_test_hook();
             crate::hermes_config::rename_provider(&rename.old_id, &rename.new_id).map(|_| ())?;
         } else if action.takeover_active {
             futures::executor::block_on(
@@ -838,6 +889,7 @@ impl ProviderService {
             app_type: app_type.clone(),
             provider,
             backup: Self::capture_live_snapshot(app_type)?,
+            rollback_live_on_failure: true,
             write_live_snapshot: true,
             sync_mcp: false,
             sync_codex_catalog: matches!(app_type, AppType::Codex),
@@ -1283,6 +1335,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider: provider_to_store.clone(),
                     backup,
+                    rollback_live_on_failure: true,
                     write_live_snapshot: true,
                     // Codex write uses merge which preserves [mcp_servers] as-is,
                     // so no MCP re-sync is needed (would lose comment-only lines).
@@ -1302,6 +1355,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider: provider_to_store.clone(),
                     backup: Self::capture_live_snapshot(&app_type_clone)?,
+                    rollback_live_on_failure: true,
                     write_live_snapshot: false,
                     sync_mcp: false,
                     sync_codex_catalog: true,
@@ -1440,6 +1494,7 @@ impl ProviderService {
                     app_type: AppType::Hermes,
                     provider,
                     backup,
+                    rollback_live_on_failure: false,
                     write_live_snapshot: false,
                     sync_mcp: false,
                     sync_codex_catalog: false,
@@ -1602,6 +1657,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider: merged,
                     backup,
+                    rollback_live_on_failure: true,
                     write_live_snapshot: true,
                     // Codex write uses merge which preserves [mcp_servers] as-is,
                     // so no MCP re-sync is needed (would lose comment-only lines).
@@ -1629,6 +1685,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider: merged,
                     backup,
+                    rollback_live_on_failure: true,
                     write_live_snapshot: false,
                     sync_mcp: false,
                     sync_codex_catalog: true,
@@ -2175,6 +2232,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider,
                     backup: Self::capture_live_snapshot(&app_type_clone)?,
+                    rollback_live_on_failure: true,
                     write_live_snapshot: true,
                     sync_mcp: matches!(app_type_clone, AppType::OpenCode),
                     sync_codex_catalog: false,
@@ -2220,6 +2278,7 @@ impl ProviderService {
                 app_type: app_type_clone.clone(),
                 provider,
                 backup,
+                rollback_live_on_failure: true,
                 write_live_snapshot: true,
                 // Codex writes provider config through a TOML merge that preserves
                 // [mcp_servers]. A global MCP resync here would overwrite live

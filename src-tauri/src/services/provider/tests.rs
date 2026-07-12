@@ -420,6 +420,111 @@ fn rename_hermes_provider_rolls_back_saved_state_when_live_write_fails() {
 }
 
 #[test]
+#[serial]
+fn rename_hermes_provider_preserves_concurrent_live_change_when_post_commit_fails() {
+    let initial_live = "custom_providers:\n  - name: old\n";
+    let concurrent_live =
+        "concurrent_marker: preserved\ncustom_providers:\n  - name: old\n  - name: new\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        initial_live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    let config_path_for_hook = config_path.clone();
+    set_provider_post_commit_test_hook(Box::new(move || {
+        std::fs::write(&config_path_for_hook, concurrent_live)
+            .expect("simulate concurrent Hermes live update");
+    }));
+
+    let result = ProviderService::rename_hermes_provider(&state, "old", "new");
+
+    assert!(result.is_err(), "concurrent target must make rename fail");
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list rolled back state");
+    assert!(providers.contains_key("old"));
+    assert!(!providers.contains_key("new"));
+    assert!(state
+        .db
+        .get_provider_by_id("old", AppType::Hermes.as_str())
+        .expect("read restored old provider")
+        .is_some());
+    assert!(state
+        .db
+        .get_provider_by_id("new", AppType::Hermes.as_str())
+        .expect("read rejected new provider")
+        .is_none());
+    assert_eq!(
+        std::fs::read_to_string(config_path).expect("read concurrent Hermes config"),
+        concurrent_live,
+        "rollback must not overwrite a concurrent live update with the stale snapshot"
+    );
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_serializes_transactions_through_post_commit() {
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    let live = "custom_providers:\n  - name: old\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let state = Arc::new(state);
+    let (hook_entered_tx, hook_entered_rx) = mpsc::channel();
+    let (release_hook_tx, release_hook_rx) = mpsc::channel();
+    set_provider_post_commit_test_hook(Box::new(move || {
+        hook_entered_tx.send(()).expect("signal hook entry");
+        release_hook_rx.recv().expect("wait for hook release");
+    }));
+
+    let first_state = Arc::clone(&state);
+    let first = std::thread::spawn(move || {
+        ProviderService::rename_hermes_provider(&first_state, "old", "new")
+    });
+    hook_entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("first transaction should reach post-commit hook");
+    assert!(
+        matches!(
+            provider_transaction_lock().try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        ),
+        "provider transaction lock must remain held throughout post-commit"
+    );
+
+    let second_state = Arc::clone(&state);
+    let (second_done_tx, second_done_rx) = mpsc::channel();
+    let second = std::thread::spawn(move || {
+        let result = ProviderService::rename_hermes_provider(&second_state, "old", "other");
+        second_done_tx.send(()).expect("signal second completion");
+        result
+    });
+    assert!(
+        second_done_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "second provider transaction must wait until first post-commit completes"
+    );
+
+    release_hook_tx.send(()).expect("release first hook");
+    assert!(first.join().expect("join first transaction").is_ok());
+    assert!(second.join().expect("join second transaction").is_err());
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list final providers");
+    assert!(providers.contains_key("new"));
+    assert!(!providers.contains_key("old"));
+    assert!(!providers.contains_key("other"));
+}
+
+#[test]
 fn capture_codex_temp_launch_snapshot_persists_auth_and_config() {
     let mut config = MultiAppConfig::default();
     config.ensure_app(&AppType::Codex);
