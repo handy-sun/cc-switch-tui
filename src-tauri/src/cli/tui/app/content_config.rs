@@ -1086,6 +1086,9 @@ impl App {
     }
 
     pub(crate) fn open_provider_edit_form(&mut self, row: &super::data::ProviderRow) {
+        if super::data::is_hermes_builtin_row(row) {
+            return;
+        }
         self.filter.active = false;
         self.overlay = Overlay::None;
         self.focus = Focus::Content;

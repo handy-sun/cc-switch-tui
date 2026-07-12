@@ -71,6 +71,260 @@ pub fn get_hermes_config_path() -> PathBuf {
     get_hermes_dir().join("config.yaml")
 }
 
+/// Non-secret metadata for an API-key provider built into Hermes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HermesBuiltinProvider {
+    pub slug: &'static str,
+    pub display_name: &'static str,
+    pub credential_env_vars: &'static [&'static str],
+    pub base_url: Option<&'static str>,
+}
+
+pub const HERMES_BUILTIN_ROW_PREFIX: &str = "builtin:";
+
+pub fn builtin_slug_from_row_id(provider_id: &str) -> Option<&str> {
+    provider_id
+        .strip_prefix(HERMES_BUILTIN_ROW_PREFIX)
+        .filter(|slug| !slug.is_empty())
+}
+
+const HERMES_BUILTIN_PROVIDERS: &[HermesBuiltinProvider] = &[
+    HermesBuiltinProvider {
+        slug: "openrouter",
+        display_name: "OpenRouter",
+        credential_env_vars: &["OPENROUTER_API_KEY"],
+        base_url: Some("https://openrouter.ai/api/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "nous",
+        display_name: "Nous Research",
+        credential_env_vars: &["NOUS_API_KEY"],
+        base_url: Some("https://inference.nousresearch.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "openai-api",
+        display_name: "OpenAI API",
+        credential_env_vars: &["OPENAI_API_KEY"],
+        base_url: Some("https://api.openai.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "lmstudio",
+        display_name: "LM Studio",
+        credential_env_vars: &["LM_API_KEY"],
+        base_url: Some("http://127.0.0.1:1234/v1"),
+    },
+    // Generic GH_TOKEN/GITHUB_TOKEN values commonly belong to Git tooling.
+    HermesBuiltinProvider {
+        slug: "copilot",
+        display_name: "GitHub Copilot",
+        credential_env_vars: &["COPILOT_GITHUB_TOKEN"],
+        base_url: Some("https://api.githubcopilot.com"),
+    },
+    HermesBuiltinProvider {
+        slug: "gemini",
+        display_name: "Google AI Studio",
+        credential_env_vars: &["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+        base_url: Some("https://generativelanguage.googleapis.com/v1beta"),
+    },
+    HermesBuiltinProvider {
+        slug: "zai",
+        display_name: "Z.AI / GLM",
+        credential_env_vars: &["GLM_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY"],
+        base_url: Some("https://api.z.ai/api/paas/v4"),
+    },
+    HermesBuiltinProvider {
+        slug: "kimi-coding",
+        display_name: "Kimi / Moonshot",
+        credential_env_vars: &["KIMI_API_KEY", "KIMI_CODING_API_KEY"],
+        base_url: Some("https://api.moonshot.ai/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "kimi-coding-cn",
+        display_name: "Kimi / Moonshot (China)",
+        credential_env_vars: &["KIMI_CN_API_KEY"],
+        base_url: Some("https://api.moonshot.cn/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "stepfun",
+        display_name: "StepFun Step Plan",
+        credential_env_vars: &["STEPFUN_API_KEY"],
+        base_url: Some("https://api.stepfun.ai/step_plan/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "arcee",
+        display_name: "Arcee AI",
+        credential_env_vars: &["ARCEEAI_API_KEY"],
+        base_url: Some("https://api.arcee.ai/api/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "gmi",
+        display_name: "GMI Cloud",
+        credential_env_vars: &["GMI_API_KEY"],
+        base_url: Some("https://api.gmi-serving.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "minimax",
+        display_name: "MiniMax",
+        credential_env_vars: &["MINIMAX_API_KEY"],
+        base_url: Some("https://api.minimax.io/anthropic"),
+    },
+    HermesBuiltinProvider {
+        slug: "anthropic",
+        display_name: "Anthropic",
+        credential_env_vars: &["ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN"],
+        base_url: Some("https://api.anthropic.com"),
+    },
+    HermesBuiltinProvider {
+        slug: "alibaba",
+        display_name: "Qwen Cloud",
+        credential_env_vars: &["DASHSCOPE_API_KEY"],
+        base_url: Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "alibaba-coding-plan",
+        display_name: "Alibaba Cloud (Coding Plan)",
+        credential_env_vars: &["ALIBABA_CODING_PLAN_API_KEY", "DASHSCOPE_API_KEY"],
+        base_url: Some("https://coding-intl.dashscope.aliyuncs.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "minimax-cn",
+        display_name: "MiniMax (China)",
+        credential_env_vars: &["MINIMAX_CN_API_KEY"],
+        base_url: Some("https://api.minimaxi.com/anthropic"),
+    },
+    HermesBuiltinProvider {
+        slug: "deepseek",
+        display_name: "DeepSeek",
+        credential_env_vars: &["DEEPSEEK_API_KEY"],
+        base_url: Some("https://api.deepseek.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "xai",
+        display_name: "xAI",
+        credential_env_vars: &["XAI_API_KEY"],
+        base_url: Some("https://api.x.ai/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "nvidia",
+        display_name: "NVIDIA NIM",
+        credential_env_vars: &["NVIDIA_API_KEY"],
+        base_url: Some("https://integrate.api.nvidia.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "opencode-zen",
+        display_name: "OpenCode Zen",
+        credential_env_vars: &["OPENCODE_ZEN_API_KEY"],
+        base_url: Some("https://opencode.ai/zen/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "opencode-go",
+        display_name: "OpenCode Go",
+        credential_env_vars: &["OPENCODE_GO_API_KEY"],
+        base_url: Some("https://opencode.ai/zen/go/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "kilocode",
+        display_name: "Kilo Code",
+        credential_env_vars: &["KILOCODE_API_KEY"],
+        base_url: Some("https://api.kilo.ai/api/gateway"),
+    },
+    HermesBuiltinProvider {
+        slug: "huggingface",
+        display_name: "Hugging Face",
+        credential_env_vars: &["HF_TOKEN"],
+        base_url: Some("https://router.huggingface.co/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "xiaomi",
+        display_name: "Xiaomi MiMo",
+        credential_env_vars: &["XIAOMI_API_KEY"],
+        base_url: Some("https://api.xiaomimimo.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "tencent-tokenhub",
+        display_name: "Tencent TokenHub",
+        credential_env_vars: &["TOKENHUB_API_KEY"],
+        base_url: Some("https://tokenhub.tencentmaas.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "ollama-cloud",
+        display_name: "Ollama Cloud",
+        credential_env_vars: &["OLLAMA_API_KEY"],
+        base_url: Some("https://ollama.com/v1"),
+    },
+    HermesBuiltinProvider {
+        slug: "azure-foundry",
+        display_name: "Azure Foundry",
+        credential_env_vars: &["AZURE_FOUNDRY_API_KEY"],
+        base_url: None,
+    },
+    HermesBuiltinProvider {
+        slug: "novita",
+        display_name: "NovitaAI",
+        credential_env_vars: &["NOVITA_API_KEY"],
+        base_url: Some("https://api.novita.ai/openai/v1"),
+    },
+];
+
+fn dotenv_non_empty_keys(content: &str) -> HashSet<String> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let mut line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            if let Some(rest) = line.strip_prefix("export") {
+                if rest.starts_with(char::is_whitespace) {
+                    line = rest.trim_start();
+                }
+            }
+            let (key, raw_value) = line.split_once('=')?;
+            let key = key.trim();
+            let valid_key = key.chars().enumerate().all(|(index, ch)| {
+                ch == '_' || ch.is_ascii_alphanumeric() && (index > 0 || !ch.is_ascii_digit())
+            });
+            if !valid_key {
+                return None;
+            }
+            let value = raw_value.trim();
+            if value.is_empty() || value.starts_with('#') {
+                return None;
+            }
+            let value = if value.len() >= 2
+                && ((value.starts_with('"') && value.ends_with('"'))
+                    || (value.starts_with('\'') && value.ends_with('\'')))
+            {
+                &value[1..value.len() - 1]
+            } else {
+                value
+            };
+            (!value.is_empty()).then(|| key.to_string())
+        })
+        .collect()
+}
+
+/// Return built-in Hermes API-key providers configured in `${HERMES_HOME}/.env`.
+/// Credential values are deliberately discarded during parsing.
+pub fn configured_builtin_providers() -> Result<Vec<&'static HermesBuiltinProvider>, AppError> {
+    let env_path = get_hermes_dir().join(".env");
+    let content = match fs::read_to_string(&env_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(AppError::io(&env_path, error)),
+    };
+    let configured_keys = dotenv_non_empty_keys(&content);
+    Ok(HERMES_BUILTIN_PROVIDERS
+        .iter()
+        .filter(|provider| {
+            provider
+                .credential_env_vars
+                .iter()
+                .any(|key| configured_keys.contains(*key))
+        })
+        .collect())
+}
+
 fn hermes_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -801,6 +1055,42 @@ fn normalize_providers_dict_entry(
     Ok(Some(json_val))
 }
 
+fn normalize_hermes_runtime_provider_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace(' ', "-")
+}
+
+/// Resolve a Hermes runtime provider reference to the original provider ID
+/// surfaced by CC Switch.
+///
+/// Hermes uses `custom:<normalized-name>` as a routing identity, while the
+/// configuration stores the original `custom_providers[].name`. New-style
+/// `providers:` entries can also expose a display name that differs from the
+/// dictionary key, which is retained in `provider_key`.
+pub fn resolve_provider_reference(
+    reference: &str,
+    providers: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    let reference = reference.trim();
+    if reference.is_empty() {
+        return None;
+    }
+    if providers.contains_key(reference) {
+        return Some(reference.to_string());
+    }
+
+    let runtime_name = reference.strip_prefix("custom:").unwrap_or(reference);
+    let normalized_reference = normalize_hermes_runtime_provider_name(runtime_name);
+    providers.iter().find_map(|(provider_id, provider)| {
+        let id_matches =
+            normalize_hermes_runtime_provider_name(provider_id) == normalized_reference;
+        let key_matches = provider
+            .get("provider_key")
+            .and_then(|value| value.as_str())
+            .is_some_and(|key| normalize_hermes_runtime_provider_name(key) == normalized_reference);
+        (id_matches || key_matches).then(|| provider_id.clone())
+    })
+}
+
 /// Collect provider entries living under the v12+ `providers:` dict.
 fn read_providers_dict_entries(config: &serde_yaml::Value) -> Vec<(String, serde_json::Value)> {
     let Some(mapping) = config.get("providers").and_then(|v| v.as_mapping()) else {
@@ -889,7 +1179,7 @@ pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, App
             .map(str::trim)
             .filter(|s| !s.is_empty());
         if let Some(provider_name) = provider_name {
-            if !map.contains_key(provider_name) {
+            if resolve_provider_reference(provider_name, &map).is_none() {
                 // Build a minimal provider entry from the model section
                 let mut entry = serde_json::Map::new();
                 entry.insert("name".to_string(), serde_json::json!(provider_name));
@@ -1912,6 +2202,152 @@ providers:
             let shared = providers.get("shared").unwrap();
             assert_eq!(shared["base_url"], "https://writable.example.com");
             assert_eq!(shared[PROVIDER_SOURCE_FIELD], PROVIDER_SOURCE_CUSTOM_LIST);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_resolves_custom_runtime_alias_to_original_list_id() {
+        with_test_home(|| {
+            let yaml = "\
+model:
+  provider: custom:sensen
+  default: sensenova-6.7-flash
+custom_providers:
+  - name: sensen
+    base_url: https://api.sensenova.cn/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let providers = get_providers().unwrap();
+            assert_eq!(providers.len(), 1);
+            assert!(providers.contains_key("sensen"));
+            assert!(!providers.contains_key("custom:sensen"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_resolves_normalized_custom_runtime_alias() {
+        with_test_home(|| {
+            let yaml = "\
+model:
+  provider: custom:my-gateway
+custom_providers:
+  - name: My Gateway
+    base_url: https://gateway.example.com/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let providers = get_providers().unwrap();
+            assert_eq!(providers.len(), 1);
+            assert!(providers.contains_key("My Gateway"));
+            assert!(!providers.contains_key("custom:my-gateway"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_resolves_custom_runtime_alias_through_providers_dict_key() {
+        with_test_home(|| {
+            let yaml = "\
+model:
+  provider: custom:edge
+providers:
+  edge:
+    name: Local Gateway
+    base_url: https://edge.example.com/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let providers = get_providers().unwrap();
+            assert_eq!(providers.len(), 1);
+            assert!(providers.contains_key("Local Gateway"));
+            assert!(!providers.contains_key("custom:edge"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_keeps_unknown_custom_runtime_reference_visible() {
+        with_test_home(|| {
+            let yaml = "\
+model:
+  provider: custom:missing
+  default: missing-model
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let providers = get_providers().unwrap();
+            assert_eq!(providers.len(), 1);
+            assert!(providers.contains_key("custom:missing"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn configured_builtin_providers_reads_provider_owned_dotenv_keys() {
+        with_test_home(|| {
+            let hermes_dir = get_hermes_dir();
+            fs::create_dir_all(&hermes_dir).unwrap();
+            fs::write(
+                hermes_dir.join(".env"),
+                "\
+DEEPSEEK_API_KEY=placeholder-deepseek-secret
+export XIAOMI_API_KEY = \"placeholder-xiaomi-secret\"
+COPILOT_GITHUB_TOKEN='placeholder-copilot-secret'
+OPENAI_API_KEY=
+",
+            )
+            .unwrap();
+
+            let providers = configured_builtin_providers().unwrap();
+            let slugs = providers
+                .iter()
+                .map(|provider| provider.slug)
+                .collect::<Vec<_>>();
+            assert!(slugs.contains(&"copilot"));
+            assert!(slugs.contains(&"deepseek"));
+            assert!(slugs.contains(&"xiaomi"));
+            assert!(!slugs.contains(&"openai-api"));
+
+            let debug = format!("{providers:?}");
+            assert!(!debug.contains("placeholder-deepseek-secret"));
+            assert!(!debug.contains("placeholder-xiaomi-secret"));
+            assert!(!debug.contains("placeholder-copilot-secret"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn configured_builtin_providers_ignores_shared_github_token() {
+        with_test_home(|| {
+            let hermes_dir = get_hermes_dir();
+            fs::create_dir_all(&hermes_dir).unwrap();
+            fs::write(
+                hermes_dir.join(".env"),
+                "GITHUB_TOKEN=placeholder-tool-secret\n",
+            )
+            .unwrap();
+
+            let providers = configured_builtin_providers().unwrap();
+            assert!(providers.iter().all(|provider| provider.slug != "copilot"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn configured_builtin_providers_returns_empty_without_dotenv() {
+        with_test_home(|| {
+            assert!(configured_builtin_providers().unwrap().is_empty());
         });
     }
 

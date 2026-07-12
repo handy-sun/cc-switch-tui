@@ -1169,11 +1169,33 @@ impl ProviderService {
     /// 获取当前供应商 ID
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
         if app_type == AppType::Hermes {
-            return Ok(crate::hermes_config::get_model_config()?
+            let runtime_provider = crate::hermes_config::get_model_config()?
                 .and_then(|model| model.provider)
                 .map(|provider| provider.trim().to_string())
                 .filter(|provider| !provider.is_empty())
-                .unwrap_or_default());
+                .unwrap_or_default();
+            if runtime_provider.is_empty() {
+                return Ok(runtime_provider);
+            }
+            match crate::hermes_config::configured_builtin_providers() {
+                Ok(configured)
+                    if configured
+                        .iter()
+                        .any(|provider| provider.slug == runtime_provider) =>
+                {
+                    return Ok(runtime_provider);
+                }
+                Err(error) => {
+                    log::warn!("Failed to inspect Hermes built-in credentials: {error}");
+                }
+                _ => {}
+            }
+            let providers = crate::hermes_config::get_providers()?;
+            return Ok(crate::hermes_config::resolve_provider_reference(
+                &runtime_provider,
+                &providers,
+            )
+            .unwrap_or(runtime_provider));
         }
         if app_type.is_additive_mode() {
             return Ok(String::new());
@@ -1895,6 +1917,41 @@ impl ProviderService {
 
     /// 切换指定应用的供应商
     pub fn switch(state: &AppState, app_type: AppType, provider_id: &str) -> Result<(), AppError> {
+        if matches!(app_type, AppType::Hermes) {
+            if let Some(builtin_slug) = crate::hermes_config::builtin_slug_from_row_id(provider_id)
+            {
+                let configured = crate::hermes_config::configured_builtin_providers()?;
+                if !configured
+                    .iter()
+                    .any(|provider| provider.slug == builtin_slug)
+                {
+                    return Err(AppError::localized(
+                        "provider.hermes.builtin.not_configured",
+                        format!("Hermes 内置供应商 {builtin_slug} 未在 .env 中配置凭据"),
+                        format!(
+                            "Hermes built-in provider {builtin_slug} has no configured credential in .env"
+                        ),
+                    ));
+                }
+                crate::hermes_config::apply_switch_defaults(builtin_slug, &serde_json::json!({}))?;
+                return Ok(());
+            }
+
+            if crate::hermes_config::configured_builtin_providers()?
+                .iter()
+                .any(|provider| provider.slug == provider_id)
+            {
+                return Err(AppError::localized(
+                    "provider.hermes.custom.conflicts_with_builtin",
+                    format!(
+                        "自定义 Hermes 供应商 {provider_id} 与内置供应商重名；请先重命名"
+                    ),
+                    format!(
+                        "Custom Hermes provider {provider_id} conflicts with a built-in provider; rename it before switching"
+                    ),
+                ));
+            }
+        }
         if !app_type.is_additive_mode() {
             let providers = state.db.get_all_providers(app_type.as_str())?;
             providers.get(provider_id).ok_or_else(|| {

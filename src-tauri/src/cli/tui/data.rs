@@ -425,6 +425,9 @@ impl UiData {
 
 pub(crate) fn provider_display_name(app_type: &AppType, row: &ProviderRow) -> String {
     let name = row.provider.name.trim();
+    if matches!(app_type, AppType::Hermes) && is_hermes_builtin_row(row) {
+        return format!("{} {name}", crate::t!("[Built-in]", "[内置]"));
+    }
     if !name.is_empty() {
         return row.provider.name.clone();
     }
@@ -434,6 +437,11 @@ pub(crate) fn provider_display_name(app_type: &AppType, row: &ProviderRow) -> St
     }
 
     row.provider.name.clone()
+}
+
+pub(crate) fn is_hermes_builtin_row(row: &ProviderRow) -> bool {
+    row.provider.category.as_deref() == Some("builtin")
+        && crate::hermes_config::builtin_slug_from_row_id(&row.id).is_some()
 }
 
 pub(crate) fn quota_target_for_current_provider(
@@ -633,7 +641,42 @@ fn load_providers(state: &AppState, app_type: &AppType) -> Result<ProvidersSnaps
 
     let current_id = ProviderService::current(state, app_type.clone())?;
     let providers = ProviderService::list(state, app_type.clone())?;
-    let sorted = sort_providers(&providers);
+    let hermes_live_providers = if matches!(app_type, AppType::Hermes) {
+        crate::hermes_config::get_providers()?
+    } else {
+        serde_json::Map::new()
+    };
+    let configured_hermes_builtins = if matches!(app_type, AppType::Hermes) {
+        match crate::hermes_config::configured_builtin_providers() {
+            Ok(providers) => providers,
+            Err(error) => {
+                log::warn!("Failed to inspect Hermes built-in credentials: {error}");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let configured_hermes_builtin_slugs = configured_hermes_builtins
+        .iter()
+        .map(|provider| provider.slug)
+        .collect::<HashSet<_>>();
+    let sorted = sort_providers(&providers)
+        .into_iter()
+        .filter(|(id, provider)| {
+            if !matches!(app_type, AppType::Hermes)
+                || provider
+                    .settings_config
+                    .get(crate::hermes_config::PROVIDER_SOURCE_FIELD)
+                    .and_then(Value::as_str)
+                    != Some("model_section")
+            {
+                return true;
+            }
+            crate::hermes_config::resolve_provider_reference(id, &hermes_live_providers)
+                .is_none_or(|canonical_id| canonical_id == id.as_str())
+        })
+        .collect::<Vec<_>>();
 
     let openclaw_live_providers = if matches!(app_type, AppType::OpenClaw) {
         crate::openclaw_config::get_providers()?
@@ -675,7 +718,8 @@ fn load_providers(state: &AppState, app_type: &AppType) -> Result<ProvidersSnaps
 
             ProviderRow {
                 api_url: extract_api_url(&provider.settings_config, app_type),
-                is_current: id == current_id,
+                is_current: id == current_id
+                    && !configured_hermes_builtin_slugs.contains(id.as_str()),
                 is_in_config: match app_type {
                     AppType::OpenCode => opencode_live_ids.contains(&id),
                     AppType::OpenClaw => openclaw_live_ids.contains(&id),
@@ -696,13 +740,41 @@ fn load_providers(state: &AppState, app_type: &AppType) -> Result<ProvidersSnaps
         })
         .collect::<Vec<_>>();
 
-    let rows = if matches!(app_type, AppType::OpenClaw) {
+    let mut rows = if matches!(app_type, AppType::OpenClaw) {
         rows.into_iter()
             .filter(|row| !openclaw_live_providers.contains_key(&row.id) || row.is_in_config)
             .collect::<Vec<_>>()
     } else {
         rows
     };
+
+    if matches!(app_type, AppType::Hermes) {
+        rows.extend(configured_hermes_builtins.into_iter().map(|descriptor| {
+            let id = format!(
+                "{}{}",
+                crate::hermes_config::HERMES_BUILTIN_ROW_PREFIX,
+                descriptor.slug
+            );
+            let mut provider = Provider::with_id(
+                id.clone(),
+                descriptor.display_name.to_string(),
+                serde_json::json!({}),
+                None,
+            );
+            provider.category = Some("builtin".to_string());
+            ProviderRow {
+                id,
+                provider,
+                api_url: descriptor.base_url.map(str::to_string),
+                is_current: current_id == descriptor.slug,
+                is_in_config: true,
+                is_saved: false,
+                is_default_model: false,
+                primary_model_id: None,
+                default_model_id: None,
+            }
+        }));
+    }
 
     let codex_current_mismatch = if matches!(app_type, AppType::Codex) {
         ProviderService::codex_current_provider_mismatch(state)?
@@ -1617,6 +1689,130 @@ mod tests {
             saved_only.api_url.as_deref(),
             Some("https://saved.example.com/v1")
         );
+    }
+
+    #[test]
+    #[serial]
+    fn load_providers_hermes_appends_configured_builtins_after_saved_rows() {
+        let _guard = lock_test_home_and_settings();
+        let _language = crate::cli::i18n::use_test_language(crate::cli::i18n::Language::English);
+        let temp = tempdir().expect("create tempdir");
+        let _home = HomeGuard::set(temp.path());
+        let hermes_dir = crate::hermes_config::get_hermes_dir();
+        std::fs::create_dir_all(&hermes_dir).expect("create Hermes dir");
+        std::fs::write(
+            hermes_dir.join(".env"),
+            "COPILOT_GITHUB_TOKEN=test-copilot\nDEEPSEEK_API_KEY=test-deepseek\nXIAOMI_API_KEY=test-xiaomi\n",
+        )
+        .expect("write Hermes dotenv");
+        std::fs::write(
+            hermes_dir.join("config.yaml"),
+            "model:\n  provider: deepseek\n  default: deepseek-chat\n",
+        )
+        .expect("write Hermes config");
+
+        let state = load_state().expect("load state");
+        state
+            .config
+            .write()
+            .expect("lock config")
+            .get_manager_mut(&AppType::Hermes)
+            .expect("Hermes manager")
+            .providers
+            .insert(
+                "saved".to_string(),
+                Provider::with_id(
+                    "saved".to_string(),
+                    "Saved Provider".to_string(),
+                    json!({"base_url": "https://saved.example/v1"}),
+                    None,
+                ),
+            );
+
+        let snapshot = load_providers(&state, &AppType::Hermes).expect("load Hermes rows");
+        assert_eq!(
+            snapshot
+                .rows
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "saved",
+                "builtin:copilot",
+                "builtin:deepseek",
+                "builtin:xiaomi"
+            ]
+        );
+        let deepseek = snapshot
+            .rows
+            .iter()
+            .find(|row| row.id == "builtin:deepseek")
+            .expect("DeepSeek built-in row");
+        assert!(deepseek.is_current);
+        assert!(!deepseek.is_saved);
+        assert_eq!(deepseek.provider.category.as_deref(), Some("builtin"));
+        assert_eq!(
+            provider_display_name(&AppType::Hermes, deepseek),
+            "[Built-in] DeepSeek"
+        );
+        drop(_language);
+        let _language = crate::cli::i18n::use_test_language(crate::cli::i18n::Language::Chinese);
+        assert_eq!(
+            provider_display_name(&AppType::Hermes, deepseek),
+            "[内置] DeepSeek"
+        );
+        assert!(!format!("{deepseek:?}").contains("test-deepseek"));
+    }
+
+    #[test]
+    #[serial]
+    fn load_providers_hermes_hides_unambiguous_historical_custom_alias_row() {
+        let _guard = lock_test_home_and_settings();
+        let temp = tempdir().expect("create tempdir");
+        let _home = HomeGuard::set(temp.path());
+        let hermes_dir = crate::hermes_config::get_hermes_dir();
+        std::fs::create_dir_all(&hermes_dir).expect("create Hermes dir");
+        std::fs::write(
+            hermes_dir.join("config.yaml"),
+            "model:\n  provider: custom:sensen\ncustom_providers:\n  - name: sensen\n    base_url: https://sensen.example/v1\n",
+        )
+        .expect("write Hermes config");
+
+        let state = load_state().expect("load state");
+        let mut config = state.config.write().expect("lock config");
+        let manager = config
+            .get_manager_mut(&AppType::Hermes)
+            .expect("Hermes manager");
+        manager.providers.insert(
+            "sensen".to_string(),
+            Provider::with_id(
+                "sensen".to_string(),
+                "Sensen".to_string(),
+                json!({"base_url": "https://sensen.example/v1"}),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "custom:sensen".to_string(),
+            Provider::with_id(
+                "custom:sensen".to_string(),
+                "custom:sensen".to_string(),
+                json!({"_cc_source": "model_section"}),
+                None,
+            ),
+        );
+        drop(config);
+
+        let snapshot = load_providers(&state, &AppType::Hermes).expect("load Hermes rows");
+        assert_eq!(
+            snapshot
+                .rows
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sensen"]
+        );
+        assert!(snapshot.rows[0].is_current);
     }
 
     #[test]

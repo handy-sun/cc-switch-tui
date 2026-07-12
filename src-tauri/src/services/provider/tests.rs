@@ -1237,6 +1237,72 @@ model:
 
 #[test]
 #[serial]
+fn hermes_current_resolves_runtime_custom_alias_to_original_provider_id() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+model:
+  provider: custom:sensen
+  default: sensenova-6.7-flash
+custom_providers:
+  - name: sensen
+    base_url: https://api.sensenova.cn/v1
+"#,
+    )
+    .expect("write hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    let state = state_from_config(config);
+
+    let current_id =
+        ProviderService::current(&state, AppType::Hermes).expect("resolve Hermes current provider");
+    assert_eq!(current_id, "sensen");
+}
+
+#[test]
+#[serial]
+fn hermes_current_keeps_configured_builtin_slug_when_custom_name_normalizes_to_it() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let hermes_dir = crate::hermes_config::get_hermes_dir();
+    std::fs::create_dir_all(&hermes_dir).expect("create Hermes dir");
+    std::fs::write(
+        hermes_dir.join(".env"),
+        "DEEPSEEK_API_KEY=placeholder-secret\n",
+    )
+    .expect("write Hermes dotenv");
+    std::fs::write(
+        hermes_dir.join("config.yaml"),
+        r#"
+model:
+  provider: deepseek
+  default: deepseek-chat
+custom_providers:
+  - name: DeepSeek
+    base_url: https://custom.example/v1
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    let state = state_from_config(config);
+
+    let current_id =
+        ProviderService::current(&state, AppType::Hermes).expect("resolve Hermes current provider");
+    assert_eq!(current_id, "deepseek");
+}
+
+#[test]
+#[serial]
 fn hermes_switch_updates_live_model_provider_and_default() {
     let temp_home = TempDir::new().expect("create temp home");
     let _env = EnvGuard::set_home(temp_home.path());
@@ -1302,6 +1368,116 @@ custom_providers: []
     assert_eq!(provider["api_key"], "sk-hermes");
     assert!(provider.get("baseUrl").is_none());
     assert!(provider.get("apiKey").is_none());
+}
+
+#[test]
+#[serial]
+fn hermes_builtin_switch_writes_raw_slug_and_preserves_default_model() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let hermes_dir = crate::hermes_config::get_hermes_dir();
+    std::fs::create_dir_all(&hermes_dir).expect("create Hermes dir");
+    std::fs::write(
+        hermes_dir.join(".env"),
+        "DEEPSEEK_API_KEY=placeholder-secret\n",
+    )
+    .expect("write Hermes dotenv");
+    std::fs::write(
+        hermes_dir.join("config.yaml"),
+        r#"
+model:
+  provider: custom:old
+  default: keep-current-model
+  base_url: https://old.example/v1
+  api_key: stale-secret
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    let state = state_from_config(config);
+
+    ProviderService::switch(&state, AppType::Hermes, "builtin:deepseek")
+        .expect("switch to configured Hermes built-in");
+
+    let model = crate::hermes_config::get_model_config()
+        .expect("read Hermes model")
+        .expect("model config");
+    assert_eq!(model.provider.as_deref(), Some("deepseek"));
+    assert_eq!(model.default.as_deref(), Some("keep-current-model"));
+    assert!(model.base_url.is_none());
+    assert!(model.extra.get("api_key").is_none());
+}
+
+#[test]
+#[serial]
+fn hermes_builtin_switch_rechecks_dotenv_before_writing() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let hermes_dir = crate::hermes_config::get_hermes_dir();
+    std::fs::create_dir_all(&hermes_dir).expect("create Hermes dir");
+    std::fs::write(
+        hermes_dir.join("config.yaml"),
+        "model:\n  provider: sensen\n  default: keep-model\n",
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    let state = state_from_config(config);
+
+    assert!(ProviderService::switch(&state, AppType::Hermes, "builtin:deepseek").is_err());
+    let model = crate::hermes_config::get_model_config()
+        .expect("read Hermes model")
+        .expect("model config");
+    assert_eq!(model.provider.as_deref(), Some("sensen"));
+    assert_eq!(model.default.as_deref(), Some("keep-model"));
+}
+
+#[test]
+#[serial]
+fn hermes_custom_provider_conflicting_with_configured_builtin_is_rejected() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let hermes_dir = crate::hermes_config::get_hermes_dir();
+    std::fs::create_dir_all(&hermes_dir).expect("create Hermes dir");
+    std::fs::write(
+        hermes_dir.join(".env"),
+        "DEEPSEEK_API_KEY=placeholder-secret\n",
+    )
+    .expect("write Hermes dotenv");
+    std::fs::write(
+        hermes_dir.join("config.yaml"),
+        "model:\n  provider: sensen\n  default: keep-model\n",
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "deepseek".to_string(),
+            Provider::with_id(
+                "deepseek".to_string(),
+                "Custom DeepSeek".to_string(),
+                json!({"base_url": "https://custom.example/v1"}),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    assert!(ProviderService::switch(&state, AppType::Hermes, "deepseek").is_err());
+    let model = crate::hermes_config::get_model_config()
+        .expect("read Hermes model")
+        .expect("model config");
+    assert_eq!(model.provider.as_deref(), Some("sensen"));
 }
 
 #[test]

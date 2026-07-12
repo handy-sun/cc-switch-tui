@@ -94,6 +94,9 @@ impl App {
     }
 
     pub(crate) fn open_provider_test_menu(&mut self, row: &super::data::ProviderRow) {
+        if super::data::is_hermes_builtin_row(row) {
+            return;
+        }
         self.overlay = Overlay::ProviderTestMenu {
             provider_id: row.id.clone(),
             selected: 0,
@@ -133,6 +136,9 @@ impl App {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
+                if super::data::is_hermes_builtin_row(row) {
+                    return Action::None;
+                }
                 self.open_provider_edit_form(row);
                 Action::None
             }
@@ -164,6 +170,9 @@ impl App {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
+                if super::data::is_hermes_builtin_row(row) {
+                    return Action::None;
+                }
                 if row.is_current {
                     self.push_toast(
                         texts::tui_toast_provider_cannot_delete_current(),
@@ -239,6 +248,9 @@ impl App {
 
         match key.code {
             KeyCode::Char('e') => {
+                if super::data::is_hermes_builtin_row(row) {
+                    return Action::None;
+                }
                 self.open_provider_edit_form(row);
                 Action::None
             }

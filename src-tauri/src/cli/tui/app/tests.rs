@@ -1283,6 +1283,81 @@ mod tests {
         assert!(matches!(action, Action::ProviderSwitch { id } if id == "p1"));
     }
 
+    fn hermes_builtin_provider_row() -> super::super::data::ProviderRow {
+        let mut provider = crate::provider::Provider::with_id(
+            "builtin:deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({}),
+            None,
+        );
+        provider.category = Some("builtin".to_string());
+        super::super::data::ProviderRow {
+            id: "builtin:deepseek".to_string(),
+            provider,
+            api_url: Some("https://api.deepseek.com/v1".to_string()),
+            is_current: false,
+            is_in_config: true,
+            is_saved: false,
+            is_default_model: false,
+            primary_model_id: None,
+            default_model_id: None,
+        }
+    }
+
+    #[test]
+    fn hermes_builtin_provider_space_requests_switch() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut data = UiData::default();
+        data.providers.rows.push(hermes_builtin_provider_row());
+
+        let action = app.on_key(key(KeyCode::Char(' ')), &data);
+        assert!(matches!(
+            action,
+            Action::ProviderSwitch { id } if id == "builtin:deepseek"
+        ));
+    }
+
+    #[test]
+    fn hermes_builtin_provider_cannot_be_edited() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut data = UiData::default();
+        data.providers.rows.push(hermes_builtin_provider_row());
+
+        let action = app.on_key(key(KeyCode::Char('e')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(app.form.is_none());
+    }
+
+    #[test]
+    fn hermes_builtin_provider_cannot_be_deleted() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut data = UiData::default();
+        data.providers.rows.push(hermes_builtin_provider_row());
+
+        let action = app.on_key(key(KeyCode::Char('d')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn hermes_builtin_provider_cannot_open_test_menu() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut data = UiData::default();
+        data.providers.rows.push(hermes_builtin_provider_row());
+
+        let action = app.on_key(key(KeyCode::Char('t')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
     #[test]
     fn providers_r_key_refreshes_official_quota() {
         let mut app = App::new(Some(AppType::Claude));
