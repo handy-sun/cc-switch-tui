@@ -2561,6 +2561,8 @@ custom_providers:
             let config_path = get_hermes_config_path();
             fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             fs::write(&config_path, yaml).unwrap();
+            let backup_dir = get_app_config_dir().join("backups/hermes");
+            assert!(!backup_dir.exists());
 
             let outcome = rename_provider(" My Gateway ", " New Gateway ").unwrap();
             assert!(outcome.backup_path.is_some());
@@ -2586,6 +2588,7 @@ custom_providers:
 
             let backup = fs::read_to_string(outcome.backup_path.unwrap()).unwrap();
             assert_eq!(backup, yaml);
+            assert_eq!(fs::read_dir(&backup_dir).unwrap().count(), 1);
         });
     }
 
@@ -2627,7 +2630,6 @@ custom_providers:
                 ("old", "Other Provider", "normalized custom collision"),
                 ("old", "dict-id", "exact dict collision"),
                 ("old", "Dict Provider", "normalized dict collision"),
-                ("old", "OpenRouter", "built-in collision"),
             ];
 
             for (old_name, new_name, scenario) in cases {
@@ -2655,6 +2657,37 @@ providers:
                     fs::read_to_string(&config_path).unwrap(),
                     yaml,
                     "{scenario} must leave the file untouched"
+                );
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_provider_rejects_every_builtin_descriptor_slug_without_writing() {
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: old
+    base_url: https://old.example.com/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+
+            for builtin in HERMES_BUILTIN_PROVIDERS {
+                fs::write(&config_path, yaml).unwrap();
+
+                let result = rename_provider("old", builtin.slug);
+                assert!(
+                    result.is_err(),
+                    "built-in provider slug '{}' should be rejected",
+                    builtin.slug
+                );
+                assert_eq!(
+                    fs::read_to_string(&config_path).unwrap(),
+                    yaml,
+                    "built-in provider slug '{}' must leave the file untouched",
+                    builtin.slug
                 );
             }
         });
