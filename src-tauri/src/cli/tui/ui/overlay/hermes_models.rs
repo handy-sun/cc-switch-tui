@@ -86,7 +86,7 @@ pub(super) fn render_hermes_model_entry_editor_overlay(
     let Overlay::HermesModelEntryEditor(editor) = overlay else {
         return;
     };
-    let area = centered_rect_fixed(68, 16, content_area);
+    let area = centered_rect_fixed(68, 19, content_area);
     frame.render_widget(Clear, area);
     let outer = Block::default()
         .borders(Borders::ALL)
@@ -103,6 +103,7 @@ pub(super) fn render_hermes_model_entry_editor_overlay(
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
+            Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
@@ -130,6 +131,11 @@ pub(super) fn render_hermes_model_entry_editor_overlay(
             texts::tui_label_context_limit(),
             &editor.context_length,
             editor.field == HermesModelEditorField::ContextLength,
+        ),
+        (
+            texts::tui_label_model_display_name(),
+            &editor.name,
+            editor.field == HermesModelEditorField::Name,
         ),
         (
             texts::tui_label_output_limit(),

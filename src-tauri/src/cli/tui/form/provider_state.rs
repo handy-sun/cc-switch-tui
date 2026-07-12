@@ -606,6 +606,7 @@ impl ProviderAddFormState {
         id: String,
         context_length: String,
         max_tokens: String,
+        name: String,
     ) -> Result<usize, String> {
         let id = id.trim().to_string();
         if id.is_empty() {
@@ -637,6 +638,12 @@ impl ProviderAddFormState {
         model.insert("id".to_string(), json!(id));
         set_or_remove_model_limit(model, "context_length", context_length);
         set_or_remove_model_limit(model, "max_tokens", max_tokens);
+        let name = name.trim();
+        if name.is_empty() {
+            model.remove("name");
+        } else {
+            model.insert("name".to_string(), json!(name));
+        }
 
         let selected = row.unwrap_or(self.openclaw_models.len());
         if let Some(row) = row {

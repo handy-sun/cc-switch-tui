@@ -56,6 +56,14 @@ pub fn tui_label_output_limit() -> &'static str {
     }
 }
 
+pub fn tui_label_model_display_name() -> &'static str {
+    if is_chinese() {
+        "显示名称"
+    } else {
+        "Display Name"
+    }
+}
+
 pub fn tui_label_codex_auto_compact_token_limit() -> &'static str {
     if is_chinese() {
         "自动压缩令牌上限"

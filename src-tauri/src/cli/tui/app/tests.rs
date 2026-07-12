@@ -3337,6 +3337,13 @@ mod tests {
         let Overlay::HermesModelEntryEditor(editor) = &mut app.overlay else {
             panic!("expected Hermes model entry editor");
         };
+        assert_eq!(editor.field, HermesModelEditorField::Name);
+        editor.name.set("GPT-5");
+
+        app.on_key(key(KeyCode::Tab), &data);
+        let Overlay::HermesModelEntryEditor(editor) = &mut app.overlay else {
+            panic!("expected Hermes model entry editor");
+        };
         assert_eq!(editor.field, HermesModelEditorField::MaxTokens);
         editor.max_tokens.set("8192");
 
@@ -3351,6 +3358,27 @@ mod tests {
         assert_eq!(form.openclaw_models[0]["id"], "gpt-5");
         assert_eq!(form.openclaw_models[0]["context_length"], 128000);
         assert_eq!(form.openclaw_models[0]["max_tokens"], 8192);
+        assert_eq!(form.openclaw_models[0]["name"], "GPT-5");
+    }
+
+    #[test]
+    fn hermes_models_picker_preloads_model_display_name_for_editing() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+        open_hermes_models_picker(&mut app, &data);
+        let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
+            panic!("expected ProviderAdd form");
+        };
+        form.openclaw_models = vec![json!({ "id": "gpt-5", "name": "GPT-5" })];
+
+        app.on_key(key(KeyCode::Enter), &data);
+
+        let Overlay::HermesModelEntryEditor(editor) = &app.overlay else {
+            panic!("expected Hermes model entry editor");
+        };
+        assert_eq!(editor.name.value, "GPT-5");
     }
 
     #[test]

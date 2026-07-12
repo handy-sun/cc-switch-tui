@@ -674,6 +674,20 @@ fn hermes_models_picker_and_editor_render_structured_fields() {
         "{editor}"
     );
     assert!(editor.contains(texts::tui_label_output_limit()), "{editor}");
+    assert!(
+        editor.contains(texts::tui_label_model_display_name()),
+        "{editor}"
+    );
+    let display_name_position = editor
+        .find(texts::tui_label_model_display_name())
+        .expect("display name field should render");
+    let output_limit_position = editor
+        .find(texts::tui_label_output_limit())
+        .expect("output limit field should render");
+    assert!(
+        display_name_position < output_limit_position,
+        "display name should render before output limit: {editor}"
+    );
     assert!(editor.contains("Enter apply"), "{editor}");
 }
 

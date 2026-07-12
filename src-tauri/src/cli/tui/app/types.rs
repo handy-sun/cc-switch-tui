@@ -169,6 +169,7 @@ pub enum HermesModelEditorField {
     Id,
     ContextLength,
     MaxTokens,
+    Name,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +180,7 @@ pub struct HermesModelEntryEditorState {
     pub id: crate::cli::tui::form::TextInput,
     pub context_length: crate::cli::tui::form::TextInput,
     pub max_tokens: crate::cli::tui::form::TextInput,
+    pub name: crate::cli::tui::form::TextInput,
 }
 
 #[derive(Debug, Clone)]

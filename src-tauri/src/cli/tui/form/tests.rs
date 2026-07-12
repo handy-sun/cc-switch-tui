@@ -2685,6 +2685,7 @@ fn provider_add_form_hermes_model_upsert_preserves_unknown_fields() {
             " new-model ".to_string(),
             "128000".to_string(),
             "8192".to_string(),
+            " New Model ".to_string(),
         )
         .expect("valid Hermes model should save");
 
@@ -2692,6 +2693,29 @@ fn provider_add_form_hermes_model_upsert_preserves_unknown_fields() {
     assert_eq!(form.openclaw_models[0]["id"], "new-model");
     assert_eq!(form.openclaw_models[0]["context_length"], 128000);
     assert_eq!(form.openclaw_models[0]["max_tokens"], 8192);
+    assert_eq!(form.openclaw_models[0]["name"], "New Model");
+    assert_eq!(form.openclaw_models[0]["reasoning_effort"], "high");
+}
+
+#[test]
+fn provider_add_form_hermes_model_upsert_removes_blank_display_name() {
+    let mut form = ProviderAddFormState::new(AppType::Hermes);
+    form.openclaw_models = vec![json!({
+        "id": "existing",
+        "name": "Existing Model",
+        "reasoning_effort": "high"
+    })];
+
+    form.upsert_hermes_model(
+        Some(0),
+        "existing".to_string(),
+        "".to_string(),
+        "".to_string(),
+        "   ".to_string(),
+    )
+    .expect("blank display name should remain valid");
+
+    assert!(form.openclaw_models[0].get("name").is_none());
     assert_eq!(form.openclaw_models[0]["reasoning_effort"], "high");
 }
 
@@ -2701,13 +2725,31 @@ fn provider_add_form_hermes_model_upsert_validates_inputs() {
     form.openclaw_models = vec![json!({ "id": "existing" })];
 
     assert!(form
-        .upsert_hermes_model(None, " ".to_string(), "".to_string(), "".to_string())
+        .upsert_hermes_model(
+            None,
+            " ".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
         .is_err());
     assert!(form
-        .upsert_hermes_model(None, "existing".to_string(), "".to_string(), "".to_string(),)
+        .upsert_hermes_model(
+            None,
+            "existing".to_string(),
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+        )
         .is_err());
     assert!(form
-        .upsert_hermes_model(None, "new".to_string(), "0".to_string(), "4096".to_string(),)
+        .upsert_hermes_model(
+            None,
+            "new".to_string(),
+            "0".to_string(),
+            "4096".to_string(),
+            "".to_string(),
+        )
         .is_err());
     assert!(form
         .upsert_hermes_model(
@@ -2715,6 +2757,7 @@ fn provider_add_form_hermes_model_upsert_validates_inputs() {
             "new".to_string(),
             "128000".to_string(),
             "many".to_string(),
+            "".to_string(),
         )
         .is_err());
 }
@@ -2791,6 +2834,7 @@ fn provider_add_form_hermes_custom_reset_clears_model_edit_state() {
         "temporary".to_string(),
         "128000".to_string(),
         "8192".to_string(),
+        "".to_string(),
     )
     .expect("add temporary Hermes model");
     assert!(form.has_unsaved_changes());

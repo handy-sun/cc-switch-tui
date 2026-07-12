@@ -49,6 +49,7 @@ impl App {
                     id: TextInput::new(""),
                     context_length: TextInput::new(""),
                     max_tokens: TextInput::new(""),
+                    name: TextInput::new(""),
                 });
                 Action::None
             }
@@ -64,6 +65,12 @@ impl App {
                     id: TextInput::new(id),
                     context_length: TextInput::new(model_number_text(model, "context_length")),
                     max_tokens: TextInput::new(model_number_text(model, "max_tokens")),
+                    name: TextInput::new(
+                        model
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    ),
                 });
                 Action::None
             }
@@ -99,25 +106,27 @@ impl App {
                 if let Overlay::HermesModelEntryEditor(editor) = &mut self.overlay {
                     editor.field = match editor.field {
                         HermesModelEditorField::Id => HermesModelEditorField::ContextLength,
-                        HermesModelEditorField::ContextLength => HermesModelEditorField::MaxTokens,
+                        HermesModelEditorField::ContextLength => HermesModelEditorField::Name,
+                        HermesModelEditorField::Name => HermesModelEditorField::MaxTokens,
                         HermesModelEditorField::MaxTokens => HermesModelEditorField::Id,
                     };
                 }
                 Some(Action::None)
             }
             KeyCode::Enter => {
-                let (row, id, context_length, max_tokens) = match &self.overlay {
+                let (row, id, context_length, max_tokens, name) = match &self.overlay {
                     Overlay::HermesModelEntryEditor(editor) => (
                         editor.row,
                         editor.id.value.clone(),
                         editor.context_length.value.clone(),
                         editor.max_tokens.value.clone(),
+                        editor.name.value.clone(),
                     ),
                     _ => return Some(Action::None),
                 };
                 let result = match self.form.as_mut() {
                     Some(FormState::ProviderAdd(provider)) => {
-                        provider.upsert_hermes_model(row, id, context_length, max_tokens)
+                        provider.upsert_hermes_model(row, id, context_length, max_tokens, name)
                     }
                     _ => return Some(Action::None),
                 };
@@ -133,6 +142,7 @@ impl App {
                         HermesModelEditorField::Id => &mut editor.id,
                         HermesModelEditorField::ContextLength => &mut editor.context_length,
                         HermesModelEditorField::MaxTokens => &mut editor.max_tokens,
+                        HermesModelEditorField::Name => &mut editor.name,
                     };
                     let _ = input.apply_key(key);
                 }
