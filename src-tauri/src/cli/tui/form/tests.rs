@@ -2616,10 +2616,29 @@ fn provider_add_form_hermes_uses_dedicated_model_field() {
     let form = ProviderAddFormState::new(AppType::Hermes);
     let fields = form.fields();
 
+    assert!(!fields.contains(&ProviderAddField::Id));
     assert!(fields.contains(&ProviderAddField::HermesModels));
     assert!(!fields.contains(&ProviderAddField::OpenClawModels));
     assert!(!fields.contains(&ProviderAddField::OpenClawUserAgent));
     assert!(!fields.contains(&ProviderAddField::OpenClawApiProtocol));
+}
+
+#[test]
+fn hermes_edit_form_shows_read_only_id_before_name() {
+    let provider = Provider::with_id(
+        "raw-hermes-id".to_string(),
+        "Hermes Provider".to_string(),
+        json!({"_cc_source": "custom_providers"}),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    let fields = form.fields();
+
+    assert_eq!(fields.first(), Some(&ProviderAddField::Id));
+    assert_eq!(fields.get(1), Some(&ProviderAddField::Name));
+    assert_eq!(form.id.value, "raw-hermes-id");
+    assert!(!form.is_id_editable());
 }
 
 #[test]

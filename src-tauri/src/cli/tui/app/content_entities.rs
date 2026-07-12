@@ -1,6 +1,18 @@
 use super::*;
 
 impl App {
+    fn open_hermes_provider_rename(&mut self, row: &super::data::ProviderRow) {
+        self.overlay = Overlay::TextInput(TextInputState {
+            title: texts::tui_hermes_provider_rename_title().to_string(),
+            prompt: texts::tui_hermes_provider_rename_prompt().to_string(),
+            input: TextInput::new(row.id.clone()),
+            submit: TextSubmit::HermesProviderRename {
+                old_id: row.id.clone(),
+            },
+            secret: false,
+        });
+    }
+
     fn openclaw_set_default_model_action(&mut self, row: &super::data::ProviderRow) -> Action {
         if !row.is_in_config {
             self.push_toast(
@@ -226,6 +238,10 @@ impl App {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
+                if super::data::is_hermes_custom_list_row(&self.app_type, row) {
+                    self.open_hermes_provider_rename(row);
+                    return Action::None;
+                }
                 if data::quota_target_for_provider(&self.app_type, row).is_none() {
                     self.push_toast(texts::tui_toast_quota_not_available(), ToastKind::Info);
                     return Action::None;
@@ -291,6 +307,10 @@ impl App {
             }
             KeyCode::Char('<') | KeyCode::Char('>') => Action::None,
             KeyCode::Char('r') => {
+                if super::data::is_hermes_custom_list_row(&self.app_type, row) {
+                    self.open_hermes_provider_rename(row);
+                    return Action::None;
+                }
                 if data::quota_target_for_provider(&self.app_type, row).is_none() {
                     self.push_toast(texts::tui_toast_quota_not_available(), ToastKind::Info);
                     return Action::None;

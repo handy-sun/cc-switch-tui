@@ -192,6 +192,24 @@ impl App {
                 }
                 Action::PromptRename { id, name: trimmed }
             }
+            TextSubmit::HermesProviderRename { old_id } => {
+                let new_id = raw.trim().to_string();
+                if new_id.is_empty() {
+                    self.push_toast(
+                        texts::tui_toast_hermes_provider_rename_blank(),
+                        ToastKind::Warning,
+                    );
+                    self.overlay = Overlay::TextInput(TextInputState {
+                        title: texts::tui_hermes_provider_rename_title().to_string(),
+                        prompt: texts::tui_hermes_provider_rename_prompt().to_string(),
+                        input: TextInput::new(raw),
+                        submit: TextSubmit::HermesProviderRename { old_id },
+                        secret: false,
+                    });
+                    return Action::None;
+                }
+                Action::HermesProviderRename { old_id, new_id }
+            }
             TextSubmit::ConfigImport => {
                 if raw.is_empty() {
                     self.push_toast(texts::tui_toast_import_path_empty(), ToastKind::Warning);

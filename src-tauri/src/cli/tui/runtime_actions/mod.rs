@@ -241,6 +241,9 @@ pub(crate) fn handle_action(
             providers::move_failover_queue(&mut ctx, id, direction)
         }
         Action::ProviderQuotaRefresh { .. } => Ok(()),
+        Action::HermesProviderRename { old_id, new_id } => {
+            providers::rename_hermes(&mut ctx, old_id, new_id)
+        }
         Action::ProviderModelFetch {
             base_url,
             api_key,

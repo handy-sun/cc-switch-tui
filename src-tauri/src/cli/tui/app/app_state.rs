@@ -98,6 +98,10 @@ pub enum Action {
     ProviderQuotaRefresh {
         id: String,
     },
+    HermesProviderRename {
+        old_id: String,
+        new_id: String,
+    },
     ProviderModelFetch {
         base_url: String,
         api_key: Option<String>,

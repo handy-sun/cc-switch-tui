@@ -189,6 +189,9 @@ pub(super) fn render_providers(
     let selected_supports_quota = visible
         .get(app.provider_idx)
         .is_some_and(|row| data::quota_target_for_provider(&app.app_type, row).is_some());
+    let selected_supports_hermes_rename = visible
+        .get(app.provider_idx)
+        .is_some_and(|row| data::is_hermes_custom_list_row(&app.app_type, row));
     if app.focus == Focus::Content {
         let mut keys = Vec::new();
         if data.providers.rows.is_empty() {
@@ -220,7 +223,9 @@ pub(super) fn render_providers(
                 ("d", texts::tui_key_delete()),
             ]);
             keys.push(("t", texts::tui_key_test()));
-            if selected_supports_quota {
+            if selected_supports_hermes_rename {
+                keys.push(("r", texts::tui_key_rename()));
+            } else if selected_supports_quota {
                 keys.push(("r", texts::tui_key_refresh()));
             }
             if crate::cli::tui::app::supports_failover_controls(&app.app_type) {
@@ -365,7 +370,9 @@ pub(super) fn render_provider_detail(
             keys.push(("o", texts::tui_key_launch_temp()));
         }
         keys.push(("t", texts::tui_key_test()));
-        if data::quota_target_for_provider(&app.app_type, row).is_some() {
+        if data::is_hermes_custom_list_row(&app.app_type, row) {
+            keys.push(("r", texts::tui_key_rename()));
+        } else if data::quota_target_for_provider(&app.app_type, row).is_some() {
             keys.push(("r", texts::tui_key_refresh()));
         }
         if matches!(app.app_type, crate::app_config::AppType::OpenClaw) && row.is_in_config {

@@ -2286,6 +2286,46 @@ pub mod texts {
         }
     }
 
+    pub fn tui_hermes_provider_rename_title() -> &'static str {
+        if is_chinese() {
+            "重命名 Hermes 供应商"
+        } else {
+            "Rename Hermes Provider"
+        }
+    }
+
+    pub fn tui_hermes_provider_rename_prompt() -> &'static str {
+        if is_chinese() {
+            "输入新的供应商 ID"
+        } else {
+            "Enter the new provider ID"
+        }
+    }
+
+    pub fn tui_toast_hermes_provider_rename_blank() -> &'static str {
+        if is_chinese() {
+            "Hermes 供应商 ID 不能为空。"
+        } else {
+            "Hermes provider ID cannot be blank."
+        }
+    }
+
+    pub fn tui_toast_hermes_provider_renamed() -> &'static str {
+        if is_chinese() {
+            "Hermes 供应商已重命名。"
+        } else {
+            "Hermes provider renamed."
+        }
+    }
+
+    pub fn tui_read_only() -> &'static str {
+        if is_chinese() {
+            "只读"
+        } else {
+            "read-only"
+        }
+    }
+
     pub fn tui_provider_add_title() -> &'static str {
         if is_chinese() {
             "新增供应商"

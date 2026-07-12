@@ -165,7 +165,10 @@ pub(crate) fn render_provider_add_form(
         .get(provider.field_idx.min(fields.len().saturating_sub(1)))
         .copied();
     if let Some(field) = selected {
-        if let Some(input) = provider.input(field) {
+        let read_only_hermes_id = field == ProviderAddField::Id
+            && provider.app_type == AppType::Hermes
+            && provider.mode.is_edit();
+        if let Some(input) = provider.input(field).filter(|_| !read_only_hermes_id) {
             let (visible, cursor_x) =
                 visible_text_window(&input.value, input.cursor, editor_inner.width as usize);
             frame.render_widget(
@@ -276,6 +279,9 @@ pub(crate) fn provider_field_label_and_value(
     field: ProviderAddField,
 ) -> (String, String) {
     let label = match field {
+        ProviderAddField::Id if provider.app_type == AppType::Hermes && provider.mode.is_edit() => {
+            format!("{} ({})", texts::tui_label_id(), texts::tui_read_only())
+        }
         ProviderAddField::Id => texts::tui_label_id().to_string(),
         ProviderAddField::Name => texts::header_name().to_string(),
         ProviderAddField::WebsiteUrl => {
@@ -378,6 +384,9 @@ pub(crate) fn provider_field_label_and_value(
         ProviderAddField::HermesModels => provider.hermes_models_summary(),
         ProviderAddField::CommonConfigDivider => "- - - - - - - - - -".to_string(),
         ProviderAddField::CommonSnippet => texts::tui_key_open().to_string(),
+        ProviderAddField::Id if provider.app_type == AppType::Hermes && provider.mode.is_edit() => {
+            format!("{} ({})", provider.id.value.trim(), texts::tui_read_only())
+        }
         _ => provider
             .input(field)
             .map(|v| v.value.trim().to_string())
@@ -402,6 +411,20 @@ pub(crate) fn provider_field_editor_line(
     let Some(field) = selected else {
         return (Line::raw(""), 0);
     };
+
+    if field == ProviderAddField::Id
+        && provider.app_type == AppType::Hermes
+        && provider.mode.is_edit()
+    {
+        return (
+            Line::raw(format!(
+                "{} ({})",
+                provider.id.value,
+                texts::tui_read_only()
+            )),
+            0,
+        );
+    }
 
     if let Some(input) = provider.input(field) {
         let shown = if matches!(

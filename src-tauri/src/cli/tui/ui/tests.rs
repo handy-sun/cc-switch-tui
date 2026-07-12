@@ -26,7 +26,7 @@ use crate::{
             ConfigSnapshot, McpLiveOnlyRow, McpSnapshot, OpenClawWorkspaceSnapshot,
             PromptsSnapshot, ProviderRow, ProvidersSnapshot, ProxySnapshot, SkillsSnapshot, UiData,
         },
-        form::{FormFocus, ProviderAddField, TextInput},
+        form::{FormFocus, FormState, ProviderAddField, TextInput},
         route::{NavItem, Route},
         theme::theme_for,
     },
@@ -7305,6 +7305,77 @@ fn provider_detail_key_bar_shows_test_hint() {
 
     assert!(all.contains("t test"));
     assert!(!all.contains("c stream check"));
+}
+
+#[test]
+fn hermes_provider_key_bars_scope_rename_hint_to_custom_list_rows() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let mut app = App::new(Some(AppType::Hermes));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+
+    let mut custom = minimal_data(&app.app_type);
+    custom.providers.rows[0].provider.settings_config = json!({
+        crate::hermes_config::PROVIDER_SOURCE_FIELD:
+            crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST
+    });
+    let custom_text = all_text(&render_with_size(&app, &custom, 180, 40));
+    assert!(custom_text.contains("r rename"), "{custom_text}");
+
+    app.route = Route::ProviderDetail {
+        id: "p1".to_string(),
+    };
+    let custom_detail_text = all_text(&render_with_size(&app, &custom, 180, 40));
+    assert!(
+        custom_detail_text.contains("r rename"),
+        "{custom_detail_text}"
+    );
+
+    let mut dict_only = minimal_data(&app.app_type);
+    dict_only.providers.rows[0].provider.settings_config = json!({
+        crate::hermes_config::PROVIDER_SOURCE_FIELD: "providers_dict"
+    });
+    let dict_text = all_text(&render_with_size(&app, &dict_only, 180, 40));
+    assert!(!dict_text.contains("r rename"), "{dict_text}");
+
+    app.route = Route::Providers;
+    let mut builtin = minimal_data(&app.app_type);
+    builtin.providers.rows[0].id = "builtin:deepseek".to_string();
+    builtin.providers.rows[0].provider.id = "builtin:deepseek".to_string();
+    builtin.providers.rows[0].provider.category = Some("builtin".to_string());
+    let mut quota_meta = crate::provider::ProviderMeta::default();
+    quota_meta.provider_type = Some("codex_oauth".to_string());
+    builtin.providers.rows[0].provider.meta = Some(quota_meta);
+    let builtin_text = all_text(&render_with_size(&app, &builtin, 180, 40));
+    assert!(!builtin_text.contains("r rename"), "{builtin_text}");
+    assert!(builtin_text.contains("r refresh"), "{builtin_text}");
+}
+
+#[test]
+fn hermes_edit_form_renders_read_only_id_before_name() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let provider = Provider::with_id(
+        "raw-hermes-id".to_string(),
+        "Friendly Name".to_string(),
+        json!({"_cc_source": "custom_providers"}),
+        None,
+    );
+    let mut app = App::new(Some(AppType::Hermes));
+    app.form = Some(FormState::ProviderAdd(
+        crate::cli::tui::form::ProviderAddFormState::from_provider(AppType::Hermes, &provider),
+    ));
+    app.focus = Focus::Content;
+
+    let text = all_text(&render(&app, &minimal_data(&AppType::Hermes)));
+
+    let id = text.find("ID (read-only)").expect("rendered ID label");
+    let name = text
+        .find("Name               Friendly Name")
+        .expect("rendered name row");
+    assert!(id < name, "{text}");
+    assert!(text.contains(texts::tui_read_only()), "{text}");
 }
 
 #[test]
