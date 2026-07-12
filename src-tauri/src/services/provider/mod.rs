@@ -1370,13 +1370,18 @@ impl ProviderService {
             if old_id == new_id {
                 return Ok((false, None));
             }
-            if manager.providers.contains_key(&new_id) {
+            let new_identity = crate::hermes_config::normalize_hermes_provider_identity(&new_id);
+            let saved_collision = manager.providers.keys().any(|provider_id| {
+                provider_id != &old_id
+                    && crate::hermes_config::normalize_hermes_provider_identity(provider_id)
+                        == new_identity
+            });
+            if saved_collision {
                 return Err(AppError::Config(format!(
                     "Hermes provider name '{new_id}' conflicts with a saved provider"
                 )));
             }
 
-            let new_identity = crate::hermes_config::normalize_hermes_provider_identity(&new_id);
             let live_collision = live_providers.iter().any(|(provider_id, provider)| {
                 if provider_id == &old_id {
                     return false;

@@ -277,6 +277,60 @@ providers:
 
 #[test]
 #[serial]
+fn rename_hermes_provider_rejects_saved_only_normalized_collision_before_mutation() {
+    let live = "custom_providers:\n  - name: old\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        live,
+        vec![
+            hermes_rename_provider(
+                "old",
+                "Old",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+            hermes_rename_provider(
+                "Other Provider",
+                "Saved Only",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+        ],
+    );
+    let original = ProviderService::list(&state, AppType::Hermes).expect("list original providers");
+
+    assert!(
+        ProviderService::rename_hermes_provider(&state, "old", "other-provider").is_err(),
+        "normalized saved-only collision must be rejected"
+    );
+    assert_eq!(
+        serde_json::to_value(
+            ProviderService::list(&state, AppType::Hermes).expect("list unchanged providers")
+        )
+        .expect("serialize unchanged providers"),
+        serde_json::to_value(&original).expect("serialize original providers")
+    );
+    assert!(state
+        .db
+        .get_provider_by_id("old", AppType::Hermes.as_str())
+        .expect("read old provider from DB")
+        .is_some());
+    assert!(state
+        .db
+        .get_provider_by_id("Other Provider", AppType::Hermes.as_str())
+        .expect("read saved-only provider from DB")
+        .is_some());
+    assert!(state
+        .db
+        .get_provider_by_id("other-provider", AppType::Hermes.as_str())
+        .expect("read rejected provider from DB")
+        .is_none());
+    assert_eq!(
+        std::fs::read_to_string(crate::hermes_config::get_hermes_config_path())
+            .expect("read unchanged live config"),
+        live
+    );
+}
+
+#[test]
+#[serial]
 fn rename_hermes_provider_rejects_missing_or_non_custom_saved_source() {
     for (source, live) in [
         (
