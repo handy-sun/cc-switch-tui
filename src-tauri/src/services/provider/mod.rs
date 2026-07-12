@@ -73,6 +73,7 @@ struct PostCommitAction {
     refresh_snapshot: bool,
     apply_hermes_switch_defaults: bool,
     hermes_removed_fields: Vec<String>,
+    hermes_provider_rename: Option<HermesProviderRename>,
     common_config_snippet: Option<String>,
     takeover_active: bool,
     /// When true, user-facing preference keys (approval_mode, disable_response_storage,
@@ -80,6 +81,12 @@ struct PostCommitAction {
     /// Set to false for common-snippet-only operations where old snippet values should
     /// not bleed through.
     preserve_live_preferences: bool,
+}
+
+#[derive(Clone)]
+struct HermesProviderRename {
+    old_id: String,
+    new_id: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -394,7 +401,9 @@ impl ProviderService {
     }
 
     fn apply_post_commit(state: &AppState, action: &PostCommitAction) -> Result<(), AppError> {
-        if action.takeover_active {
+        if let Some(rename) = &action.hermes_provider_rename {
+            crate::hermes_config::rename_provider(&rename.old_id, &rename.new_id).map(|_| ())?;
+        } else if action.takeover_active {
             futures::executor::block_on(
                 state
                     .proxy_service
@@ -836,6 +845,7 @@ impl ProviderService {
             refresh_snapshot: false,
             apply_hermes_switch_defaults: false,
             hermes_removed_fields: Vec::new(),
+            hermes_provider_rename: None,
             common_config_snippet: config.common_config_snippets.get(app_type).cloned(),
             takeover_active,
             preserve_live_preferences,
@@ -1282,6 +1292,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
                     hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: None,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1298,6 +1309,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
                     hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: None,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1307,6 +1319,135 @@ impl ProviderService {
             };
 
             Ok((true, action))
+        })
+    }
+
+    pub fn rename_hermes_provider(
+        state: &AppState,
+        old_id: &str,
+        new_id: &str,
+    ) -> Result<bool, AppError> {
+        let old_id = old_id.trim().to_string();
+        let new_id = new_id.trim().to_string();
+        let live_providers = crate::hermes_config::get_providers()?;
+
+        Self::run_transaction(state, move |config| {
+            let manager = config
+                .get_manager_mut(&AppType::Hermes)
+                .ok_or_else(|| Self::app_not_found(&AppType::Hermes))?;
+            let saved = manager.providers.get(&old_id).ok_or_else(|| {
+                AppError::localized(
+                    "provider.not_found",
+                    format!("供应商不存在: {old_id}"),
+                    format!("Provider not found: {old_id}"),
+                )
+            })?;
+
+            let saved_source = saved
+                .settings_config
+                .get(crate::hermes_config::PROVIDER_SOURCE_FIELD)
+                .and_then(Value::as_str);
+            let writable = match saved_source {
+                Some(source) => source == crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST,
+                None => {
+                    live_providers.get(&old_id).and_then(|provider| {
+                        provider
+                            .get(crate::hermes_config::PROVIDER_SOURCE_FIELD)
+                            .and_then(Value::as_str)
+                    }) == Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST)
+                }
+            };
+            if !writable {
+                return Err(AppError::Config(format!(
+                    "Hermes provider '{old_id}' is not a writable custom provider"
+                )));
+            }
+            if new_id.is_empty() {
+                return Err(AppError::Config(
+                    "Hermes provider name cannot be empty".to_string(),
+                ));
+            }
+            if old_id == new_id {
+                return Ok((false, None));
+            }
+            if manager.providers.contains_key(&new_id) {
+                return Err(AppError::Config(format!(
+                    "Hermes provider name '{new_id}' conflicts with a saved provider"
+                )));
+            }
+
+            let new_identity = crate::hermes_config::normalize_hermes_provider_identity(&new_id);
+            let live_collision = live_providers.iter().any(|(provider_id, provider)| {
+                if provider_id == &old_id {
+                    return false;
+                }
+                let source = provider
+                    .get(crate::hermes_config::PROVIDER_SOURCE_FIELD)
+                    .and_then(Value::as_str);
+                if !matches!(
+                    source,
+                    Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST)
+                        | Some(crate::hermes_config::PROVIDER_SOURCE_DICT)
+                ) {
+                    return false;
+                }
+                [
+                    Some(provider_id.as_str()),
+                    provider.get("name").and_then(Value::as_str),
+                    provider.get("provider_key").and_then(Value::as_str),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|candidate| {
+                    crate::hermes_config::normalize_hermes_provider_identity(candidate)
+                        == new_identity
+                })
+            });
+            if live_collision {
+                return Err(AppError::Config(format!(
+                    "Hermes provider name '{new_id}' conflicts with a live provider"
+                )));
+            }
+            if crate::hermes_config::conflicts_with_builtin_provider_identity(&new_id) {
+                return Err(AppError::Config(format!(
+                    "Hermes provider name '{new_id}' conflicts with built-in provider identity"
+                )));
+            }
+
+            let backup = Self::capture_live_snapshot(&AppType::Hermes)?;
+            let (index, _, mut provider) = manager
+                .providers
+                .shift_remove_full(&old_id)
+                .expect("validated Hermes provider should remain present");
+            provider.id = new_id.clone();
+            if let Some(settings) = provider.settings_config.as_object_mut() {
+                if settings.contains_key("name") {
+                    settings.insert("name".to_string(), Value::String(new_id.clone()));
+                }
+            }
+            manager
+                .providers
+                .shift_insert(index, new_id.clone(), provider.clone());
+
+            Ok((
+                true,
+                Some(PostCommitAction {
+                    app_type: AppType::Hermes,
+                    provider,
+                    backup,
+                    write_live_snapshot: false,
+                    sync_mcp: false,
+                    sync_codex_catalog: false,
+                    stale_codex_catalog_keys: Vec::new(),
+                    refresh_snapshot: false,
+                    apply_hermes_switch_defaults: false,
+                    hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: Some(HermesProviderRename { old_id, new_id }),
+                    common_config_snippet: None,
+                    takeover_active: false,
+                    preserve_live_preferences: true,
+                }),
+            ))
         })
     }
 
@@ -1465,6 +1606,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: update_hermes_switch_defaults,
                     hermes_removed_fields,
+                    hermes_provider_rename: None,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1489,6 +1631,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
                     hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: None,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -2034,6 +2177,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: matches!(app_type_clone, AppType::Hermes),
                     hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: None,
                     common_config_snippet: config
                         .common_config_snippets
                         .get(&app_type_clone)
@@ -2081,6 +2225,7 @@ impl ProviderService {
                 refresh_snapshot: true,
                 apply_hermes_switch_defaults: false,
                 hermes_removed_fields: Vec::new(),
+                hermes_provider_rename: None,
                 common_config_snippet: config.common_config_snippets.get(&app_type_clone).cloned(),
                 takeover_active: false,
                 preserve_live_preferences: true,

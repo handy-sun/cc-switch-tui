@@ -1059,9 +1059,16 @@ fn normalize_hermes_runtime_provider_name(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace(' ', "-")
 }
 
-fn normalize_hermes_provider_identity(value: &str) -> String {
+pub(crate) fn normalize_hermes_provider_identity(value: &str) -> String {
     let value = value.trim();
     normalize_hermes_runtime_provider_name(value.strip_prefix("custom:").unwrap_or(value))
+}
+
+pub(crate) fn conflicts_with_builtin_provider_identity(value: &str) -> bool {
+    let identity = normalize_hermes_provider_identity(value);
+    HERMES_BUILTIN_PROVIDERS
+        .iter()
+        .any(|provider| normalize_hermes_provider_identity(provider.slug) == identity)
 }
 
 /// Resolve a Hermes runtime provider reference to the original provider ID
@@ -1478,10 +1485,7 @@ pub fn rename_provider(old_name: &str, new_name: &str) -> Result<HermesWriteOutc
         )));
     }
 
-    if HERMES_BUILTIN_PROVIDERS
-        .iter()
-        .any(|provider| normalize_hermes_provider_identity(provider.slug) == new_identity)
-    {
+    if conflicts_with_builtin_provider_identity(new_name) {
         return Err(AppError::Config(format!(
             "Hermes provider name '{new_name}' conflicts with built-in provider identity"
         )));
