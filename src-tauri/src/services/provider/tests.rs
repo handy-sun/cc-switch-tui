@@ -465,6 +465,96 @@ fn rename_hermes_provider_preserves_concurrent_live_change_when_post_commit_fail
 
 #[test]
 #[serial]
+fn rename_hermes_provider_local_rollback_preserves_concurrent_provider_update() {
+    use std::sync::Arc;
+
+    let initial_live = "custom_providers:\n  - name: old\n";
+    let collision_live = "custom_providers:\n  - name: old\n  - name: new\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        initial_live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let state = Arc::new(state);
+    let hook_state = Arc::clone(&state);
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    let config_path_for_hook = config_path.clone();
+    set_provider_post_commit_test_hook(Box::new(move || {
+        ProviderService::update_sort_order(
+            &hook_state,
+            AppType::Hermes,
+            vec![ProviderSortUpdate {
+                id: "new".to_string(),
+                sort_index: 77,
+            }],
+        )
+        .expect("simulate concurrent saved-provider update");
+        std::fs::write(&config_path_for_hook, collision_live)
+            .expect("create concurrent live collision");
+    }));
+
+    assert!(ProviderService::rename_hermes_provider(&state, "old", "new").is_err());
+
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list rolled back state");
+    let old = providers.get("old").expect("old provider restored");
+    assert_eq!(old.id, "old");
+    assert_eq!(
+        old.sort_index,
+        Some(77),
+        "local rollback must preserve concurrent changes to the renamed provider object"
+    );
+    assert!(!providers.contains_key("new"));
+    assert_eq!(
+        state
+            .db
+            .get_provider_by_id("old", AppType::Hermes.as_str())
+            .expect("read restored old provider from DB")
+            .expect("old provider persisted")
+            .sort_index,
+        Some(77)
+    );
+    assert_eq!(
+        std::fs::read_to_string(config_path).expect("read concurrent live config"),
+        collision_live
+    );
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_restores_live_snapshot_when_target_disappears() {
+    let initial_live = "custom_providers:\n  - name: old\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        initial_live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    let config_path_for_hook = config_path.clone();
+    set_provider_post_commit_test_hook(Box::new(move || {
+        std::fs::remove_file(&config_path_for_hook)
+            .expect("simulate atomic replacement target disappearing");
+    }));
+
+    assert!(ProviderService::rename_hermes_provider(&state, "old", "new").is_err());
+
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list rolled back state");
+    assert!(providers.contains_key("old"));
+    assert!(!providers.contains_key("new"));
+    let restored = crate::hermes_config::read_hermes_config().expect("read restored live snapshot");
+    assert_eq!(
+        restored["custom_providers"][0]["name"].as_str(),
+        Some("old")
+    );
+}
+
+#[test]
+#[serial]
 fn rename_hermes_provider_serializes_transactions_through_post_commit() {
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
