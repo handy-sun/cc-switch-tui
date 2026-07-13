@@ -450,12 +450,51 @@ fn find_yaml_section_range(raw: &str, section_key: &str) -> Option<(usize, usize
 ///   default: "anthropic/claude-opus-4-7"
 ///   provider: "openrouter"
 /// ```
+fn indent_yaml_sequences(yaml: &str) -> String {
+    let mut sequence_indents = Vec::new();
+    let mut output = String::with_capacity(yaml.len());
+
+    for line in yaml.split_inclusive('\n') {
+        let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
+        let indent = line_without_newline
+            .bytes()
+            .take_while(|byte| *byte == b' ')
+            .count();
+        let content = &line_without_newline[indent..];
+        let is_sequence_item = content == "-" || content.starts_with("- ");
+
+        if is_sequence_item {
+            while sequence_indents.last().is_some_and(|level| *level > indent) {
+                sequence_indents.pop();
+            }
+            if sequence_indents.last().copied() != Some(indent) {
+                sequence_indents.push(indent);
+            }
+        } else if !content.is_empty() {
+            while sequence_indents
+                .last()
+                .is_some_and(|level| *level >= indent)
+            {
+                sequence_indents.pop();
+            }
+        }
+
+        output.push_str(&" ".repeat(sequence_indents.len() * 2));
+        output.push_str(line_without_newline);
+        if line.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+
+    output
+}
+
 fn serialize_yaml_section(key: &str, value: &serde_yaml::Value) -> Result<String, AppError> {
     let mut section = serde_yaml::Mapping::new();
     section.insert(serde_yaml::Value::String(key.to_string()), value.clone());
     let yaml_str = serde_yaml::to_string(&serde_yaml::Value::Mapping(section))
         .map_err(|e| AppError::Config(format!("Failed to serialize YAML section '{key}': {e}")))?;
-    Ok(yaml_str)
+    Ok(indent_yaml_sequences(&yaml_str))
 }
 
 /// Replace a YAML section in raw text, or append it if not found.
@@ -2038,6 +2077,24 @@ model:
         // Should match "model:", not "model_extra:"
         assert!(section.starts_with("model:"));
         assert!(!section.starts_with("model_extra:"));
+    }
+
+    // ---- YAML serialization tests ----
+
+    #[test]
+    fn serialize_section_indents_sequence_items_beyond_parent_keys() {
+        let value: serde_yaml::Value =
+            serde_yaml::from_str("- name: foo\n  aliases:\n  - first\n  - second\n- name: bar\n")
+                .unwrap();
+
+        let serialized = serialize_yaml_section("custom_providers", &value).unwrap();
+
+        assert_eq!(
+            serialized,
+            "custom_providers:\n  - name: foo\n    aliases:\n      - first\n      - second\n  - name: bar\n"
+        );
+        let reparsed: serde_yaml::Value = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(reparsed["custom_providers"], value);
     }
 
     // ---- replace_yaml_section tests ----
