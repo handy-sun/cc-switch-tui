@@ -66,6 +66,7 @@ struct PostCommitAction {
     app_type: AppType,
     provider: Provider,
     backup: LiveSnapshot,
+    rollback_strategy: PostCommitRollback,
     write_live_snapshot: bool,
     sync_mcp: bool,
     sync_codex_catalog: bool,
@@ -73,6 +74,7 @@ struct PostCommitAction {
     refresh_snapshot: bool,
     apply_hermes_switch_defaults: bool,
     hermes_removed_fields: Vec<String>,
+    hermes_provider_rename: Option<HermesProviderRename>,
     common_config_snippet: Option<String>,
     takeover_active: bool,
     /// When true, user-facing preference keys (approval_mode, disable_response_storage,
@@ -80,6 +82,53 @@ struct PostCommitAction {
     /// Set to false for common-snippet-only operations where old snippet values should
     /// not bleed through.
     preserve_live_preferences: bool,
+}
+
+#[derive(Clone)]
+struct HermesProviderRename {
+    old_id: String,
+    new_id: String,
+    original_index: usize,
+}
+
+#[derive(Clone)]
+enum PostCommitRollback {
+    Snapshot,
+    HermesRename(HermesProviderRename),
+}
+
+fn provider_transaction_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[cfg(test)]
+type ProviderPostCommitTestHook = Box<dyn FnOnce() + Send + 'static>;
+
+#[cfg(test)]
+fn provider_post_commit_test_hook() -> &'static std::sync::Mutex<Option<ProviderPostCommitTestHook>>
+{
+    static HOOK: std::sync::OnceLock<std::sync::Mutex<Option<ProviderPostCommitTestHook>>> =
+        std::sync::OnceLock::new();
+    HOOK.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+fn set_provider_post_commit_test_hook(hook: ProviderPostCommitTestHook) {
+    *provider_post_commit_test_hook()
+        .lock()
+        .expect("provider post-commit test hook lock") = Some(hook);
+}
+
+#[cfg(test)]
+fn run_provider_post_commit_test_hook() {
+    let hook = provider_post_commit_test_hook()
+        .lock()
+        .expect("provider post-commit test hook lock")
+        .take();
+    if let Some(hook) = hook {
+        hook();
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -255,6 +304,7 @@ impl ProviderService {
     where
         F: FnOnce(&mut MultiAppConfig) -> Result<(R, Option<PostCommitAction>), AppError>,
     {
+        let _transaction_guard = provider_transaction_lock().lock()?;
         let mut guard = state.config.write().map_err(AppError::from)?;
         let original = guard.clone();
         let (result, action) = match f(&mut guard) {
@@ -267,7 +317,9 @@ impl ProviderService {
         drop(guard);
 
         if let Err(save_err) = state.save() {
-            if let Err(rollback_err) = Self::restore_config_only(state, original.clone()) {
+            if let Err(rollback_err) =
+                Self::rollback_config_after_failure(state, original.clone(), action.as_ref(), None)
+            {
                 return Err(AppError::localized(
                     "config.save.rollback_failed",
                     format!("保存配置失败: {save_err}；回滚失败: {rollback_err}"),
@@ -279,9 +331,13 @@ impl ProviderService {
 
         if let Some(action) = action {
             if let Err(err) = Self::apply_post_commit(state, &action) {
-                if let Err(rollback_err) =
-                    Self::rollback_after_failure(state, original.clone(), action.backup.clone())
-                {
+                let rollback = Self::rollback_after_post_commit_failure(
+                    state,
+                    original.clone(),
+                    &action,
+                    None,
+                );
+                if let Err(rollback_err) = rollback {
                     return Err(AppError::localized(
                         "post_commit.rollback_failed",
                         format!("后置操作失败: {err}；回滚失败: {rollback_err}"),
@@ -303,6 +359,7 @@ impl ProviderService {
     where
         F: FnOnce(&mut MultiAppConfig) -> Result<(R, Option<PostCommitAction>), AppError>,
     {
+        let _transaction_guard = provider_transaction_lock().lock()?;
         let mut guard = state.config.write().map_err(AppError::from)?;
         let original = guard.clone();
         let (result, action) = match f(&mut guard) {
@@ -315,10 +372,11 @@ impl ProviderService {
         drop(guard);
 
         if let Err(save_err) = state.save_preserving_current_providers(preserved_current_apps) {
-            if let Err(rollback_err) = Self::restore_config_only_preserving_current_providers(
+            if let Err(rollback_err) = Self::rollback_config_after_failure(
                 state,
                 original.clone(),
-                preserved_current_apps,
+                action.as_ref(),
+                Some(preserved_current_apps),
             ) {
                 return Err(AppError::localized(
                     "config.save.rollback_failed",
@@ -331,12 +389,13 @@ impl ProviderService {
 
         if let Some(action) = action {
             if let Err(err) = Self::apply_post_commit(state, &action) {
-                if let Err(rollback_err) = Self::rollback_after_failure_preserving_current_providers(
+                let rollback = Self::rollback_after_post_commit_failure(
                     state,
                     original.clone(),
-                    preserved_current_apps,
-                    action.backup.clone(),
-                ) {
+                    &action,
+                    Some(preserved_current_apps),
+                );
+                if let Err(rollback_err) = rollback {
                     return Err(AppError::localized(
                         "post_commit.rollback_failed",
                         format!("后置操作失败: {err}；回滚失败: {rollback_err}"),
@@ -370,31 +429,96 @@ impl ProviderService {
         state.save_preserving_current_providers(preserved_current_apps)
     }
 
-    fn rollback_after_failure(
+    fn rollback_hermes_provider_rename(
         state: &AppState,
-        snapshot: MultiAppConfig,
-        backup: LiveSnapshot,
+        rename: &HermesProviderRename,
     ) -> Result<(), AppError> {
-        Self::restore_config_only(state, snapshot)?;
-        backup.restore()
+        {
+            let mut config = state.config.write().map_err(AppError::from)?;
+            let manager = config
+                .get_manager_mut(&AppType::Hermes)
+                .ok_or_else(|| Self::app_not_found(&AppType::Hermes))?;
+            if manager.providers.contains_key(&rename.old_id) {
+                return Err(AppError::Config(format!(
+                    "Cannot roll back Hermes rename: provider '{}' already exists",
+                    rename.old_id
+                )));
+            }
+            let current = manager.providers.get(&rename.new_id).ok_or_else(|| {
+                AppError::Config(format!(
+                    "Cannot roll back Hermes rename: provider '{}' no longer exists",
+                    rename.new_id
+                ))
+            })?;
+            if current.id != rename.new_id {
+                return Err(AppError::Config(format!(
+                    "Cannot roll back Hermes rename: provider '{}' identity changed to '{}'",
+                    rename.new_id, current.id
+                )));
+            }
+
+            let (_, _, mut provider) = manager
+                .providers
+                .shift_remove_full(&rename.new_id)
+                .expect("validated renamed Hermes provider should remain present");
+            provider.id = rename.old_id.clone();
+            if let Some(settings) = provider.settings_config.as_object_mut() {
+                if settings.contains_key("name") {
+                    settings.insert("name".to_string(), Value::String(rename.old_id.clone()));
+                }
+            }
+            let index = rename.original_index.min(manager.providers.len());
+            manager
+                .providers
+                .shift_insert(index, rename.old_id.clone(), provider);
+        }
+        state.save()
     }
 
-    fn rollback_after_failure_preserving_current_providers(
+    fn rollback_config_after_failure(
         state: &AppState,
         snapshot: MultiAppConfig,
-        preserved_current_apps: &[AppType],
-        backup: LiveSnapshot,
+        action: Option<&PostCommitAction>,
+        preserved_current_apps: Option<&[AppType]>,
     ) -> Result<(), AppError> {
-        Self::restore_config_only_preserving_current_providers(
-            state,
-            snapshot,
-            preserved_current_apps,
-        )?;
-        backup.restore()
+        match action.map(|action| &action.rollback_strategy) {
+            Some(PostCommitRollback::HermesRename(rename)) => {
+                Self::rollback_hermes_provider_rename(state, rename)
+            }
+            _ => match preserved_current_apps {
+                Some(apps) => {
+                    Self::restore_config_only_preserving_current_providers(state, snapshot, apps)
+                }
+                None => Self::restore_config_only(state, snapshot),
+            },
+        }
+    }
+
+    fn rollback_after_post_commit_failure(
+        state: &AppState,
+        snapshot: MultiAppConfig,
+        action: &PostCommitAction,
+        preserved_current_apps: Option<&[AppType]>,
+    ) -> Result<(), AppError> {
+        Self::rollback_config_after_failure(state, snapshot, Some(action), preserved_current_apps)?;
+        match &action.rollback_strategy {
+            PostCommitRollback::Snapshot => action.backup.restore(),
+            PostCommitRollback::HermesRename(_) => {
+                if crate::hermes_config::get_hermes_config_path().exists() {
+                    Ok(())
+                } else {
+                    action.backup.restore()
+                }
+            }
+        }
     }
 
     fn apply_post_commit(state: &AppState, action: &PostCommitAction) -> Result<(), AppError> {
-        if action.takeover_active {
+        if let Some(rename) = &action.hermes_provider_rename {
+            #[cfg(test)]
+            run_provider_post_commit_test_hook();
+            crate::hermes_config::rename_provider(&rename.old_id, &rename.new_id).map(|_| ())?;
+        } else if action.takeover_active {
             futures::executor::block_on(
                 state
                     .proxy_service
@@ -829,6 +953,7 @@ impl ProviderService {
             app_type: app_type.clone(),
             provider,
             backup: Self::capture_live_snapshot(app_type)?,
+            rollback_strategy: PostCommitRollback::Snapshot,
             write_live_snapshot: true,
             sync_mcp: false,
             sync_codex_catalog: matches!(app_type, AppType::Codex),
@@ -836,6 +961,7 @@ impl ProviderService {
             refresh_snapshot: false,
             apply_hermes_switch_defaults: false,
             hermes_removed_fields: Vec::new(),
+            hermes_provider_rename: None,
             common_config_snippet: config.common_config_snippets.get(app_type).cloned(),
             takeover_active,
             preserve_live_preferences,
@@ -1273,6 +1399,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider: provider_to_store.clone(),
                     backup,
+                    rollback_strategy: PostCommitRollback::Snapshot,
                     write_live_snapshot: true,
                     // Codex write uses merge which preserves [mcp_servers] as-is,
                     // so no MCP re-sync is needed (would lose comment-only lines).
@@ -1282,6 +1409,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
                     hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: None,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1291,6 +1419,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider: provider_to_store.clone(),
                     backup: Self::capture_live_snapshot(&app_type_clone)?,
+                    rollback_strategy: PostCommitRollback::Snapshot,
                     write_live_snapshot: false,
                     sync_mcp: false,
                     sync_codex_catalog: true,
@@ -1298,6 +1427,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
                     hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: None,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1307,6 +1437,146 @@ impl ProviderService {
             };
 
             Ok((true, action))
+        })
+    }
+
+    pub fn rename_hermes_provider(
+        state: &AppState,
+        old_id: &str,
+        new_id: &str,
+    ) -> Result<bool, AppError> {
+        let old_id = old_id.trim().to_string();
+        let new_id = new_id.trim().to_string();
+        let live_providers = crate::hermes_config::get_providers()?;
+
+        Self::run_transaction(state, move |config| {
+            let manager = config
+                .get_manager_mut(&AppType::Hermes)
+                .ok_or_else(|| Self::app_not_found(&AppType::Hermes))?;
+            let saved = manager.providers.get(&old_id).ok_or_else(|| {
+                AppError::localized(
+                    "provider.not_found",
+                    format!("供应商不存在: {old_id}"),
+                    format!("Provider not found: {old_id}"),
+                )
+            })?;
+
+            let saved_source = saved
+                .settings_config
+                .get(crate::hermes_config::PROVIDER_SOURCE_FIELD)
+                .and_then(Value::as_str);
+            let writable = match saved_source {
+                Some(source) => source == crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST,
+                None => {
+                    live_providers.get(&old_id).and_then(|provider| {
+                        provider
+                            .get(crate::hermes_config::PROVIDER_SOURCE_FIELD)
+                            .and_then(Value::as_str)
+                    }) == Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST)
+                }
+            };
+            if !writable {
+                return Err(AppError::Config(format!(
+                    "Hermes provider '{old_id}' is not a writable custom provider"
+                )));
+            }
+            if new_id.is_empty() {
+                return Err(AppError::Config(
+                    "Hermes provider name cannot be empty".to_string(),
+                ));
+            }
+            if old_id == new_id {
+                return Ok((false, None));
+            }
+            let new_identity = crate::hermes_config::normalize_hermes_provider_identity(&new_id);
+            let saved_collision = manager.providers.keys().any(|provider_id| {
+                provider_id != &old_id
+                    && crate::hermes_config::normalize_hermes_provider_identity(provider_id)
+                        == new_identity
+            });
+            if saved_collision {
+                return Err(AppError::Config(format!(
+                    "Hermes provider name '{new_id}' conflicts with a saved provider"
+                )));
+            }
+
+            let live_collision = live_providers.iter().any(|(provider_id, provider)| {
+                if provider_id == &old_id {
+                    return false;
+                }
+                let source = provider
+                    .get(crate::hermes_config::PROVIDER_SOURCE_FIELD)
+                    .and_then(Value::as_str);
+                if !matches!(
+                    source,
+                    Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST)
+                        | Some(crate::hermes_config::PROVIDER_SOURCE_DICT)
+                ) {
+                    return false;
+                }
+                [
+                    Some(provider_id.as_str()),
+                    provider.get("name").and_then(Value::as_str),
+                    provider.get("provider_key").and_then(Value::as_str),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|candidate| {
+                    crate::hermes_config::normalize_hermes_provider_identity(candidate)
+                        == new_identity
+                })
+            });
+            if live_collision {
+                return Err(AppError::Config(format!(
+                    "Hermes provider name '{new_id}' conflicts with a live provider"
+                )));
+            }
+            if crate::hermes_config::conflicts_with_builtin_provider_identity(&new_id) {
+                return Err(AppError::Config(format!(
+                    "Hermes provider name '{new_id}' conflicts with built-in provider identity"
+                )));
+            }
+
+            let backup = Self::capture_live_snapshot(&AppType::Hermes)?;
+            let (index, _, mut provider) = manager
+                .providers
+                .shift_remove_full(&old_id)
+                .expect("validated Hermes provider should remain present");
+            provider.id = new_id.clone();
+            if let Some(settings) = provider.settings_config.as_object_mut() {
+                if settings.contains_key("name") {
+                    settings.insert("name".to_string(), Value::String(new_id.clone()));
+                }
+            }
+            manager
+                .providers
+                .shift_insert(index, new_id.clone(), provider.clone());
+
+            let rename = HermesProviderRename {
+                old_id,
+                new_id,
+                original_index: index,
+            };
+            Ok((
+                true,
+                Some(PostCommitAction {
+                    app_type: AppType::Hermes,
+                    provider,
+                    backup,
+                    rollback_strategy: PostCommitRollback::HermesRename(rename.clone()),
+                    write_live_snapshot: false,
+                    sync_mcp: false,
+                    sync_codex_catalog: false,
+                    stale_codex_catalog_keys: Vec::new(),
+                    refresh_snapshot: false,
+                    apply_hermes_switch_defaults: false,
+                    hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: Some(rename),
+                    common_config_snippet: None,
+                    takeover_active: false,
+                    preserve_live_preferences: true,
+                }),
+            ))
         })
     }
 
@@ -1456,6 +1726,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider: merged,
                     backup,
+                    rollback_strategy: PostCommitRollback::Snapshot,
                     write_live_snapshot: true,
                     // Codex write uses merge which preserves [mcp_servers] as-is,
                     // so no MCP re-sync is needed (would lose comment-only lines).
@@ -1465,6 +1736,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: update_hermes_switch_defaults,
                     hermes_removed_fields,
+                    hermes_provider_rename: None,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -1482,6 +1754,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider: merged,
                     backup,
+                    rollback_strategy: PostCommitRollback::Snapshot,
                     write_live_snapshot: false,
                     sync_mcp: false,
                     sync_codex_catalog: true,
@@ -1489,6 +1762,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: false,
                     hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: None,
                     common_config_snippet,
                     takeover_active: false,
                     preserve_live_preferences: true,
@@ -2027,6 +2301,7 @@ impl ProviderService {
                     app_type: app_type_clone.clone(),
                     provider,
                     backup: Self::capture_live_snapshot(&app_type_clone)?,
+                    rollback_strategy: PostCommitRollback::Snapshot,
                     write_live_snapshot: true,
                     sync_mcp: matches!(app_type_clone, AppType::OpenCode),
                     sync_codex_catalog: false,
@@ -2034,6 +2309,7 @@ impl ProviderService {
                     refresh_snapshot: false,
                     apply_hermes_switch_defaults: matches!(app_type_clone, AppType::Hermes),
                     hermes_removed_fields: Vec::new(),
+                    hermes_provider_rename: None,
                     common_config_snippet: config
                         .common_config_snippets
                         .get(&app_type_clone)
@@ -2071,6 +2347,7 @@ impl ProviderService {
                 app_type: app_type_clone.clone(),
                 provider,
                 backup,
+                rollback_strategy: PostCommitRollback::Snapshot,
                 write_live_snapshot: true,
                 // Codex writes provider config through a TOML merge that preserves
                 // [mcp_servers]. A global MCP resync here would overwrite live
@@ -2081,6 +2358,7 @@ impl ProviderService {
                 refresh_snapshot: true,
                 apply_hermes_switch_defaults: false,
                 hermes_removed_fields: Vec::new(),
+                hermes_provider_rename: None,
                 common_config_snippet: config.common_config_snippets.get(&app_type_clone).cloned(),
                 takeover_active: false,
                 preserve_live_preferences: true,

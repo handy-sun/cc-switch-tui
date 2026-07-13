@@ -1059,6 +1059,18 @@ fn normalize_hermes_runtime_provider_name(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace(' ', "-")
 }
 
+pub(crate) fn normalize_hermes_provider_identity(value: &str) -> String {
+    let value = value.trim();
+    normalize_hermes_runtime_provider_name(value.strip_prefix("custom:").unwrap_or(value))
+}
+
+pub(crate) fn conflicts_with_builtin_provider_identity(value: &str) -> bool {
+    let identity = normalize_hermes_provider_identity(value);
+    HERMES_BUILTIN_PROVIDERS
+        .iter()
+        .any(|provider| normalize_hermes_provider_identity(provider.slug) == identity)
+}
+
 /// Resolve a Hermes runtime provider reference to the original provider ID
 /// surfaced by CC Switch.
 ///
@@ -1387,6 +1399,144 @@ pub fn set_provider_with_removed_fields(
 
     let providers_value = serde_yaml::Value::Sequence(providers);
     write_yaml_section_to_config_locked("custom_providers", &providers_value)
+}
+
+/// Rename a writable custom provider and keep the active model reference in sync.
+///
+/// Both affected YAML sections are prepared in memory and committed with one
+/// backup and one atomic write, preserving unrelated top-level source text.
+pub fn rename_provider(old_name: &str, new_name: &str) -> Result<HermesWriteOutcome, AppError> {
+    let old_name = old_name.trim();
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+        return Err(AppError::Config(
+            "Hermes provider name cannot be empty".to_string(),
+        ));
+    }
+    if old_name == new_name {
+        return Ok(HermesWriteOutcome::default());
+    }
+
+    let _guard = hermes_write_lock().lock()?;
+    let config_path = get_hermes_config_path();
+    let raw = if config_path.exists() {
+        fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?
+    } else {
+        String::new()
+    };
+    let config: serde_yaml::Value = if raw.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&raw)
+            .map_err(|e| AppError::Config(format!("Failed to parse Hermes config as YAML: {e}")))?
+    };
+
+    let mut providers = config
+        .get("custom_providers")
+        .and_then(serde_yaml::Value::as_sequence)
+        .cloned()
+        .unwrap_or_default();
+    let source_exists = providers
+        .iter()
+        .any(|provider| provider.get("name").and_then(serde_yaml::Value::as_str) == Some(old_name));
+    if !source_exists {
+        ensure_provider_writable(&config, old_name, "rename")?;
+        return Err(AppError::Config(format!(
+            "Hermes custom provider '{old_name}' does not exist"
+        )));
+    }
+
+    let old_identity = normalize_hermes_provider_identity(old_name);
+    let new_identity = normalize_hermes_provider_identity(new_name);
+    let conflicts = |candidate: &str| {
+        let candidate = candidate.trim();
+        candidate == new_name || normalize_hermes_provider_identity(candidate) == new_identity
+    };
+
+    if providers.iter().any(|provider| {
+        provider
+            .get("name")
+            .and_then(serde_yaml::Value::as_str)
+            .is_some_and(|candidate| candidate != old_name && conflicts(candidate))
+    }) {
+        return Err(AppError::Config(format!(
+            "Hermes provider name '{new_name}' conflicts with an existing custom provider"
+        )));
+    }
+
+    if config
+        .get("providers")
+        .and_then(serde_yaml::Value::as_mapping)
+        .is_some_and(|mapping| {
+            mapping.iter().any(|(key, value)| {
+                value.is_mapping()
+                    && (key
+                        .as_str()
+                        .is_some_and(|candidate| candidate != old_name && conflicts(candidate))
+                        || value
+                            .get("name")
+                            .and_then(serde_yaml::Value::as_str)
+                            .is_some_and(|candidate| candidate != old_name && conflicts(candidate)))
+            })
+        })
+    {
+        return Err(AppError::Config(format!(
+            "Hermes provider name '{new_name}' conflicts with an existing providers: entry"
+        )));
+    }
+
+    if conflicts_with_builtin_provider_identity(new_name) {
+        return Err(AppError::Config(format!(
+            "Hermes provider name '{new_name}' conflicts with built-in provider identity"
+        )));
+    }
+
+    for provider in &mut providers {
+        if provider.get("name").and_then(serde_yaml::Value::as_str) == Some(old_name) {
+            provider
+                .as_mapping_mut()
+                .expect("provider with a name is a mapping")
+                .insert(
+                    serde_yaml::Value::String("name".to_string()),
+                    serde_yaml::Value::String(new_name.to_string()),
+                );
+        }
+    }
+
+    let providers_value = serde_yaml::Value::Sequence(providers);
+    let mut new_raw = replace_yaml_section(&raw, "custom_providers", &providers_value)?;
+
+    if let Some(mut model) = config
+        .get("model")
+        .and_then(serde_yaml::Value::as_mapping)
+        .cloned()
+    {
+        let active_matches = model
+            .get("provider")
+            .and_then(serde_yaml::Value::as_str)
+            .is_some_and(|provider| normalize_hermes_provider_identity(provider) == old_identity);
+        if active_matches {
+            model.insert(
+                serde_yaml::Value::String("provider".to_string()),
+                serde_yaml::Value::String(new_name.to_string()),
+            );
+            new_raw = replace_yaml_section(&new_raw, "model", &serde_yaml::Value::Mapping(model))?;
+        }
+    }
+
+    let backup_path = if raw.is_empty() {
+        None
+    } else {
+        Some(create_hermes_backup(&raw)?)
+    };
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    atomic_write(&config_path, new_raw.as_bytes())?;
+
+    Ok(HermesWriteOutcome {
+        backup_path: backup_path.map(|path| path.display().to_string()),
+    })
 }
 
 /// Remove a custom provider by name.
@@ -2390,6 +2540,197 @@ providers:
             fs::write(&config_path, yaml).unwrap();
 
             assert!(remove_provider("anthropic").is_err());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_provider_updates_custom_name_and_active_model_identity() {
+        with_test_home(|| {
+            let yaml = "\
+# keep this comment
+model:
+  provider: custom:my-gateway
+  default: model-v1
+  routing_hint: preserve-me
+agent:
+  max_turns: 42
+custom_providers:
+  - name: My Gateway
+    base_url: https://gateway.example.com/v1
+    request_timeout_seconds: 300
+  - name: other
+    base_url: https://other.example.com/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+            let backup_dir = get_app_config_dir().join("backups/hermes");
+            assert!(!backup_dir.exists());
+
+            let outcome = rename_provider(" My Gateway ", " New Gateway ").unwrap();
+            assert!(outcome.backup_path.is_some());
+
+            let raw = fs::read_to_string(&config_path).unwrap();
+            let config: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
+            assert_eq!(
+                config["custom_providers"][0]["name"].as_str(),
+                Some("New Gateway")
+            );
+            assert_eq!(config["model"]["provider"].as_str(), Some("New Gateway"));
+            assert_eq!(config["model"]["default"].as_str(), Some("model-v1"));
+            assert_eq!(
+                config["model"]["routing_hint"].as_str(),
+                Some("preserve-me")
+            );
+            assert_eq!(
+                config["custom_providers"][0]["request_timeout_seconds"].as_u64(),
+                Some(300)
+            );
+            assert!(raw.contains("# keep this comment\n"));
+            assert!(raw.contains("agent:\n  max_turns: 42\n"));
+
+            let backup = fs::read_to_string(outcome.backup_path.unwrap()).unwrap();
+            assert_eq!(backup, yaml);
+            assert_eq!(fs::read_dir(&backup_dir).unwrap().count(), 1);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_provider_leaves_unrelated_model_provider_unchanged() {
+        with_test_home(|| {
+            let yaml = "\
+model:
+  provider: custom:other
+  default: model-v1
+custom_providers:
+  - name: old
+    base_url: https://old.example.com/v1
+  - name: other
+    base_url: https://other.example.com/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            rename_provider("old", "new").unwrap();
+
+            let config: serde_yaml::Value =
+                serde_yaml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+            assert_eq!(config["custom_providers"][0]["name"], "new");
+            assert_eq!(config["model"]["provider"], "custom:other");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_provider_rejects_invalid_or_colliding_id_without_writing() {
+        with_test_home(|| {
+            let cases = [
+                ("old", "   ", "blank target"),
+                ("missing", "new", "missing source"),
+                ("old", "other", "exact custom collision"),
+                ("old", "Other Provider", "normalized custom collision"),
+                ("old", "dict-id", "exact dict collision"),
+                ("old", "Dict Provider", "normalized dict collision"),
+            ];
+
+            for (old_name, new_name, scenario) in cases {
+                let yaml = "\
+custom_providers:
+  - name: old
+    base_url: https://old.example.com/v1
+  - name: other
+    base_url: https://other.example.com/v1
+  - name: other-provider
+    base_url: https://normalized.example.com/v1
+providers:
+  dict-id:
+    base_url: https://dict.example.com/v1
+  dict-provider:
+    base_url: https://normalized-dict.example.com/v1
+";
+                let config_path = get_hermes_config_path();
+                fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+                fs::write(&config_path, yaml).unwrap();
+
+                let result = rename_provider(old_name, new_name);
+                assert!(result.is_err(), "{scenario} should be rejected");
+                assert_eq!(
+                    fs::read_to_string(&config_path).unwrap(),
+                    yaml,
+                    "{scenario} must leave the file untouched"
+                );
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_provider_rejects_every_builtin_descriptor_slug_without_writing() {
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: old
+    base_url: https://old.example.com/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+
+            for builtin in HERMES_BUILTIN_PROVIDERS {
+                fs::write(&config_path, yaml).unwrap();
+
+                let result = rename_provider("old", builtin.slug);
+                assert!(
+                    result.is_err(),
+                    "built-in provider slug '{}' should be rejected",
+                    builtin.slug
+                );
+                assert_eq!(
+                    fs::read_to_string(&config_path).unwrap(),
+                    yaml,
+                    "built-in provider slug '{}' must leave the file untouched",
+                    builtin.slug
+                );
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_provider_rejects_dict_only_source_without_writing() {
+        with_test_home(|| {
+            let yaml = "\
+providers:
+  old:
+    base_url: https://old.example.com/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            assert!(rename_provider("old", "new").is_err());
+            assert_eq!(fs::read_to_string(&config_path).unwrap(), yaml);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_provider_same_trimmed_id_is_noop() {
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: old
+    base_url: https://old.example.com/v1
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let outcome = rename_provider(" old ", " old ").unwrap();
+            assert!(outcome.backup_path.is_none());
+            assert_eq!(fs::read_to_string(&config_path).unwrap(), yaml);
         });
     }
 

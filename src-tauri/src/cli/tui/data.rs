@@ -444,6 +444,17 @@ pub(crate) fn is_hermes_builtin_row(row: &ProviderRow) -> bool {
         && crate::hermes_config::builtin_slug_from_row_id(&row.id).is_some()
 }
 
+pub(crate) fn is_hermes_custom_list_row(app_type: &AppType, row: &ProviderRow) -> bool {
+    matches!(app_type, AppType::Hermes)
+        && !is_hermes_builtin_row(row)
+        && row
+            .provider
+            .settings_config
+            .get(crate::hermes_config::PROVIDER_SOURCE_FIELD)
+            .and_then(serde_json::Value::as_str)
+            == Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST)
+}
+
 pub(crate) fn quota_target_for_current_provider(
     app_type: &AppType,
     data: &UiData,

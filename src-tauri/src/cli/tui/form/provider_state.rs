@@ -152,7 +152,9 @@ impl ProviderAddFormState {
             ProviderAddField::Notes,
         ];
 
-        if matches!(self.app_type, AppType::OpenClaw) {
+        if matches!(self.app_type, AppType::OpenClaw)
+            || (matches!(self.app_type, AppType::Hermes) && self.mode.is_edit())
+        {
             fields.insert(0, ProviderAddField::Id);
         }
 

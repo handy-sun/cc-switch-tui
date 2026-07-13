@@ -74,6 +74,546 @@ fn with_common_enabled(mut provider: Provider) -> Provider {
     provider
 }
 
+fn hermes_rename_provider(id: &str, friendly_name: &str, source: Option<&str>) -> Provider {
+    let mut settings = json!({
+        "name": id,
+        "base_url": format!("https://{id}.example/v1"),
+        "models": [{ "id": "test-model" }]
+    });
+    if let Some(source) = source {
+        settings[crate::hermes_config::PROVIDER_SOURCE_FIELD] = json!(source);
+    }
+    Provider::with_id(id.to_string(), friendly_name.to_string(), settings, None)
+}
+
+fn hermes_rename_state(live_yaml: &str, providers: Vec<Provider>) -> (TempDir, EnvGuard, AppState) {
+    let temp_home = TempDir::new().expect("create temp home");
+    let env = EnvGuard::set_home(temp_home.path());
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("Hermes config parent"))
+        .expect("create Hermes config dir");
+    std::fs::write(&config_path, live_yaml).expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    let manager = config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager");
+    for provider in providers {
+        manager.providers.insert(provider.id.clone(), provider);
+    }
+
+    let state = state_from_config(config);
+    (temp_home, env, state)
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_migrates_saved_identity_order_and_live_yaml() {
+    let (_temp_home, _env, state) = hermes_rename_state(
+        r#"
+model:
+  provider: custom:old-provider
+  default: test-model
+custom_providers:
+  - name: old-provider
+    base_url: https://old-provider.example/v1
+    models:
+      test-model: {}
+"#,
+        vec![
+            hermes_rename_provider(
+                "first",
+                "First",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+            hermes_rename_provider(
+                "old-provider",
+                "Friendly Gateway",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+            hermes_rename_provider(
+                "last",
+                "Last",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+        ],
+    );
+
+    let renamed =
+        ProviderService::rename_hermes_provider(&state, " old-provider ", " new-provider ")
+            .expect("rename Hermes provider");
+
+    assert!(renamed);
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list Hermes providers");
+    assert_eq!(
+        providers.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["first", "new-provider", "last"]
+    );
+    assert!(!providers.contains_key("old-provider"));
+    let provider = providers.get("new-provider").expect("renamed provider");
+    assert_eq!(provider.id, "new-provider");
+    assert_eq!(provider.name, "Friendly Gateway");
+    assert_eq!(provider.settings_config["name"], "new-provider");
+    assert_eq!(
+        provider.settings_config[crate::hermes_config::PROVIDER_SOURCE_FIELD],
+        crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST
+    );
+    assert!(state
+        .db
+        .get_provider_by_id("old-provider", AppType::Hermes.as_str())
+        .expect("read old provider from DB")
+        .is_none());
+    assert_eq!(
+        state
+            .db
+            .get_provider_by_id("new-provider", AppType::Hermes.as_str())
+            .expect("read new provider from DB")
+            .expect("new provider persisted")
+            .id,
+        "new-provider"
+    );
+
+    let yaml = crate::hermes_config::read_hermes_config().expect("read renamed Hermes config");
+    let live_names = yaml["custom_providers"]
+        .as_sequence()
+        .expect("custom providers sequence")
+        .iter()
+        .filter_map(|provider| provider.get("name").and_then(serde_yaml::Value::as_str))
+        .collect::<Vec<_>>();
+    assert_eq!(live_names, vec!["new-provider"]);
+    assert_eq!(
+        yaml["model"]["provider"].as_str(),
+        Some("new-provider"),
+        "active model.provider should follow the renamed identity"
+    );
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_same_trimmed_id_is_noop_after_writability_check() {
+    let live = "custom_providers:\n  - name: old\n    base_url: https://old.example/v1\n";
+    let (_temp_home, _env, state) =
+        hermes_rename_state(live, vec![hermes_rename_provider("old", "Friendly", None)]);
+
+    assert!(
+        !ProviderService::rename_hermes_provider(&state, " old ", "old")
+            .expect("same ID should be a no-op")
+    );
+    assert_eq!(
+        std::fs::read_to_string(crate::hermes_config::get_hermes_config_path())
+            .expect("read unchanged Hermes config"),
+        live
+    );
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list providers");
+    assert_eq!(
+        providers.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["old"]
+    );
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_rejects_blank_saved_and_live_identity_collisions() {
+    let live = r#"
+custom_providers:
+  - name: old
+  - name: Other Provider
+providers:
+  dict-key:
+    name: Dict Provider
+"#;
+    let (_temp_home, _env, state) = hermes_rename_state(
+        live,
+        vec![
+            hermes_rename_provider(
+                "old",
+                "Old",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+            hermes_rename_provider(
+                "saved",
+                "Saved",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+        ],
+    );
+    let original = ProviderService::list(&state, AppType::Hermes).expect("list original providers");
+    let original_live = std::fs::read_to_string(crate::hermes_config::get_hermes_config_path())
+        .expect("read original live config");
+
+    for new_id in [
+        "   ",
+        "saved",
+        "other-provider",
+        "dict provider",
+        "OpenAI API",
+    ] {
+        assert!(
+            ProviderService::rename_hermes_provider(&state, "old", new_id).is_err(),
+            "rename should reject collision {new_id:?}"
+        );
+        assert_eq!(
+            serde_json::to_value(
+                ProviderService::list(&state, AppType::Hermes).expect("list rolled back providers")
+            )
+            .expect("serialize rolled back providers"),
+            serde_json::to_value(&original).expect("serialize original providers")
+        );
+        assert_eq!(
+            std::fs::read_to_string(crate::hermes_config::get_hermes_config_path())
+                .expect("read unchanged live config"),
+            original_live
+        );
+        if !original.contains_key(new_id.trim()) {
+            assert!(state
+                .db
+                .get_provider_by_id(new_id.trim(), AppType::Hermes.as_str())
+                .expect("read rejected new provider")
+                .is_none());
+        }
+    }
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_rejects_saved_only_normalized_collision_before_mutation() {
+    let live = "custom_providers:\n  - name: old\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        live,
+        vec![
+            hermes_rename_provider(
+                "old",
+                "Old",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+            hermes_rename_provider(
+                "Other Provider",
+                "Saved Only",
+                Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+            ),
+        ],
+    );
+    let original = ProviderService::list(&state, AppType::Hermes).expect("list original providers");
+
+    assert!(
+        ProviderService::rename_hermes_provider(&state, "old", "other-provider").is_err(),
+        "normalized saved-only collision must be rejected"
+    );
+    assert_eq!(
+        serde_json::to_value(
+            ProviderService::list(&state, AppType::Hermes).expect("list unchanged providers")
+        )
+        .expect("serialize unchanged providers"),
+        serde_json::to_value(&original).expect("serialize original providers")
+    );
+    assert!(state
+        .db
+        .get_provider_by_id("old", AppType::Hermes.as_str())
+        .expect("read old provider from DB")
+        .is_some());
+    assert!(state
+        .db
+        .get_provider_by_id("Other Provider", AppType::Hermes.as_str())
+        .expect("read saved-only provider from DB")
+        .is_some());
+    assert!(state
+        .db
+        .get_provider_by_id("other-provider", AppType::Hermes.as_str())
+        .expect("read rejected provider from DB")
+        .is_none());
+    assert_eq!(
+        std::fs::read_to_string(crate::hermes_config::get_hermes_config_path())
+            .expect("read unchanged live config"),
+        live
+    );
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_rejects_missing_or_non_custom_saved_source() {
+    for (source, live) in [
+        (
+            crate::hermes_config::PROVIDER_SOURCE_DICT,
+            "providers:\n  old:\n    base_url: https://dict.example/v1\n",
+        ),
+        (
+            "model_section",
+            "model:\n  provider: old\n  base_url: https://model.example/v1\n",
+        ),
+    ] {
+        let (_temp_home, _env, state) = hermes_rename_state(
+            live,
+            vec![hermes_rename_provider("old", "Old", Some(source))],
+        );
+        let original = ProviderService::list(&state, AppType::Hermes).expect("list providers");
+
+        assert!(ProviderService::rename_hermes_provider(&state, "old", "new").is_err());
+        assert_eq!(
+            serde_json::to_value(
+                ProviderService::list(&state, AppType::Hermes).expect("list unchanged providers")
+            )
+            .expect("serialize unchanged providers"),
+            serde_json::to_value(&original).expect("serialize original providers")
+        );
+        assert!(state
+            .db
+            .get_provider_by_id("new", AppType::Hermes.as_str())
+            .expect("read rejected new provider")
+            .is_none());
+        assert_eq!(
+            std::fs::read_to_string(crate::hermes_config::get_hermes_config_path())
+                .expect("read unchanged live config"),
+            live
+        );
+    }
+
+    let (_temp_home, _env, state) = hermes_rename_state("custom_providers: []\n", Vec::new());
+    assert!(ProviderService::rename_hermes_provider(&state, "missing", "new").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn rename_hermes_provider_rolls_back_saved_state_when_live_write_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let live = "custom_providers:\n  - name: old\n    base_url: https://old.example/v1\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    let hermes_dir = config_path.parent().expect("Hermes config parent");
+    std::fs::set_permissions(hermes_dir, std::fs::Permissions::from_mode(0o500))
+        .expect("make Hermes config directory read-only");
+
+    let result = ProviderService::rename_hermes_provider(&state, "old", "new");
+
+    std::fs::set_permissions(hermes_dir, std::fs::Permissions::from_mode(0o700))
+        .expect("restore Hermes config directory permissions");
+    assert!(
+        result.is_err(),
+        "live write failure must fail the transaction"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&config_path).expect("read rolled back live config"),
+        live
+    );
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list rolled back state");
+    assert!(providers.contains_key("old"));
+    assert!(!providers.contains_key("new"));
+    assert!(state
+        .db
+        .get_provider_by_id("old", AppType::Hermes.as_str())
+        .expect("read old provider from DB")
+        .is_some());
+    assert!(state
+        .db
+        .get_provider_by_id("new", AppType::Hermes.as_str())
+        .expect("read new provider from DB")
+        .is_none());
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_preserves_concurrent_live_change_when_post_commit_fails() {
+    let initial_live = "custom_providers:\n  - name: old\n";
+    let concurrent_live =
+        "concurrent_marker: preserved\ncustom_providers:\n  - name: old\n  - name: new\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        initial_live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    let config_path_for_hook = config_path.clone();
+    set_provider_post_commit_test_hook(Box::new(move || {
+        std::fs::write(&config_path_for_hook, concurrent_live)
+            .expect("simulate concurrent Hermes live update");
+    }));
+
+    let result = ProviderService::rename_hermes_provider(&state, "old", "new");
+
+    assert!(result.is_err(), "concurrent target must make rename fail");
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list rolled back state");
+    assert!(providers.contains_key("old"));
+    assert!(!providers.contains_key("new"));
+    assert!(state
+        .db
+        .get_provider_by_id("old", AppType::Hermes.as_str())
+        .expect("read restored old provider")
+        .is_some());
+    assert!(state
+        .db
+        .get_provider_by_id("new", AppType::Hermes.as_str())
+        .expect("read rejected new provider")
+        .is_none());
+    assert_eq!(
+        std::fs::read_to_string(config_path).expect("read concurrent Hermes config"),
+        concurrent_live,
+        "rollback must not overwrite a concurrent live update with the stale snapshot"
+    );
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_local_rollback_preserves_concurrent_provider_update() {
+    use std::sync::Arc;
+
+    let initial_live = "custom_providers:\n  - name: old\n";
+    let collision_live = "custom_providers:\n  - name: old\n  - name: new\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        initial_live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let state = Arc::new(state);
+    let hook_state = Arc::clone(&state);
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    let config_path_for_hook = config_path.clone();
+    set_provider_post_commit_test_hook(Box::new(move || {
+        ProviderService::update_sort_order(
+            &hook_state,
+            AppType::Hermes,
+            vec![ProviderSortUpdate {
+                id: "new".to_string(),
+                sort_index: 77,
+            }],
+        )
+        .expect("simulate concurrent saved-provider update");
+        std::fs::write(&config_path_for_hook, collision_live)
+            .expect("create concurrent live collision");
+    }));
+
+    assert!(ProviderService::rename_hermes_provider(&state, "old", "new").is_err());
+
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list rolled back state");
+    let old = providers.get("old").expect("old provider restored");
+    assert_eq!(old.id, "old");
+    assert_eq!(
+        old.sort_index,
+        Some(77),
+        "local rollback must preserve concurrent changes to the renamed provider object"
+    );
+    assert!(!providers.contains_key("new"));
+    assert_eq!(
+        state
+            .db
+            .get_provider_by_id("old", AppType::Hermes.as_str())
+            .expect("read restored old provider from DB")
+            .expect("old provider persisted")
+            .sort_index,
+        Some(77)
+    );
+    assert_eq!(
+        std::fs::read_to_string(config_path).expect("read concurrent live config"),
+        collision_live
+    );
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_restores_live_snapshot_when_target_disappears() {
+    let initial_live = "custom_providers:\n  - name: old\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        initial_live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    let config_path_for_hook = config_path.clone();
+    set_provider_post_commit_test_hook(Box::new(move || {
+        std::fs::remove_file(&config_path_for_hook)
+            .expect("simulate atomic replacement target disappearing");
+    }));
+
+    assert!(ProviderService::rename_hermes_provider(&state, "old", "new").is_err());
+
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list rolled back state");
+    assert!(providers.contains_key("old"));
+    assert!(!providers.contains_key("new"));
+    let restored = crate::hermes_config::read_hermes_config().expect("read restored live snapshot");
+    assert_eq!(
+        restored["custom_providers"][0]["name"].as_str(),
+        Some("old")
+    );
+}
+
+#[test]
+#[serial]
+fn rename_hermes_provider_serializes_transactions_through_post_commit() {
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    let live = "custom_providers:\n  - name: old\n";
+    let (_temp_home, _env, state) = hermes_rename_state(
+        live,
+        vec![hermes_rename_provider(
+            "old",
+            "Friendly",
+            Some(crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST),
+        )],
+    );
+    let state = Arc::new(state);
+    let (hook_entered_tx, hook_entered_rx) = mpsc::channel();
+    let (release_hook_tx, release_hook_rx) = mpsc::channel();
+    set_provider_post_commit_test_hook(Box::new(move || {
+        hook_entered_tx.send(()).expect("signal hook entry");
+        release_hook_rx.recv().expect("wait for hook release");
+    }));
+
+    let first_state = Arc::clone(&state);
+    let first = std::thread::spawn(move || {
+        ProviderService::rename_hermes_provider(&first_state, "old", "new")
+    });
+    hook_entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("first transaction should reach post-commit hook");
+    assert!(
+        matches!(
+            provider_transaction_lock().try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        ),
+        "provider transaction lock must remain held throughout post-commit"
+    );
+
+    let second_state = Arc::clone(&state);
+    let (second_done_tx, second_done_rx) = mpsc::channel();
+    let second = std::thread::spawn(move || {
+        let result = ProviderService::rename_hermes_provider(&second_state, "old", "other");
+        second_done_tx.send(()).expect("signal second completion");
+        result
+    });
+    assert!(
+        second_done_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "second provider transaction must wait until first post-commit completes"
+    );
+
+    release_hook_tx.send(()).expect("release first hook");
+    assert!(first.join().expect("join first transaction").is_ok());
+    assert!(second.join().expect("join second transaction").is_err());
+    let providers = ProviderService::list(&state, AppType::Hermes).expect("list final providers");
+    assert!(providers.contains_key("new"));
+    assert!(!providers.contains_key("old"));
+    assert!(!providers.contains_key("other"));
+}
+
 #[test]
 fn capture_codex_temp_launch_snapshot_persists_auth_and_config() {
     let mut config = MultiAppConfig::default();

@@ -91,6 +91,9 @@ pub enum TextSubmit {
     PromptRename {
         id: String,
     },
+    HermesProviderRename {
+        old_id: String,
+    },
     SettingsProxyListenAddress,
     SettingsProxyListenPort,
     SettingsOpenClawConfigDir,

@@ -1304,6 +1304,280 @@ mod tests {
         }
     }
 
+    fn hermes_custom_provider_row(source: Option<&str>) -> super::super::data::ProviderRow {
+        let mut settings = json!({"base_url": "https://example.com/v1"});
+        if let Some(source) = source {
+            settings[crate::hermes_config::PROVIDER_SOURCE_FIELD] = json!(source);
+        }
+        super::super::data::ProviderRow {
+            id: "raw-provider-id".to_string(),
+            provider: crate::provider::Provider::with_id(
+                "raw-provider-id".to_string(),
+                "Friendly Name".to_string(),
+                settings,
+                None,
+            ),
+            api_url: Some("https://example.com/v1".to_string()),
+            is_current: false,
+            is_in_config: true,
+            is_saved: true,
+            is_default_model: false,
+            primary_model_id: None,
+            default_model_id: None,
+        }
+    }
+
+    #[test]
+    fn hermes_provider_rename_list_opens_prefilled_overlay() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut data = UiData::default();
+        data.providers.rows.push(hermes_custom_provider_row(Some(
+            crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST,
+        )));
+
+        let action = app.on_key(key(KeyCode::Char('r')), &data);
+
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::HermesProviderRename { ref old_id },
+                ref input,
+                ..
+            }) if old_id == "raw-provider-id" && input.value == "raw-provider-id"
+        ));
+    }
+
+    #[test]
+    fn hermes_provider_rename_detail_submits_trimmed_action() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::ProviderDetail {
+            id: "raw-provider-id".to_string(),
+        };
+        app.focus = Focus::Content;
+        let mut data = UiData::default();
+        data.providers.rows.push(hermes_custom_provider_row(Some(
+            crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST,
+        )));
+
+        app.on_key(key(KeyCode::Char('r')), &data);
+        let Overlay::TextInput(input) = &mut app.overlay else {
+            panic!("expected rename input");
+        };
+        input.input.set("  renamed-provider  ");
+
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(
+            action,
+            Action::HermesProviderRename { old_id, new_id }
+                if old_id == "raw-provider-id" && new_id == "renamed-provider"
+        ));
+    }
+
+    #[test]
+    fn hermes_provider_rename_blank_keeps_overlay_open() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.overlay = Overlay::TextInput(TextInputState {
+            title: texts::tui_hermes_provider_rename_title().to_string(),
+            prompt: texts::tui_hermes_provider_rename_prompt().to_string(),
+            input: TextInput::new("   "),
+            submit: TextSubmit::HermesProviderRename {
+                old_id: "raw-provider-id".to_string(),
+            },
+            secret: false,
+        });
+
+        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::HermesProviderRename { .. },
+                ..
+            })
+        ));
+        assert!(matches!(app.toast.as_ref(), Some(toast) if toast.kind == ToastKind::Warning));
+    }
+
+    #[test]
+    fn hermes_provider_rename_requires_custom_list_source() {
+        for row in [
+            hermes_builtin_provider_row(),
+            hermes_custom_provider_row(Some("providers_dict")),
+            hermes_custom_provider_row(Some("model_section")),
+            hermes_custom_provider_row(None),
+        ] {
+            let mut app = App::new(Some(AppType::Hermes));
+            app.route = Route::Providers;
+            app.focus = Focus::Content;
+            let mut data = UiData::default();
+            data.providers.rows.push(row);
+
+            let action = app.on_key(key(KeyCode::Char('r')), &data);
+
+            assert!(!matches!(app.overlay, Overlay::TextInput(_)));
+            assert!(!matches!(action, Action::HermesProviderRename { .. }));
+        }
+    }
+
+    #[test]
+    fn hermes_edit_id_cannot_enter_editing_or_change_while_openclaw_add_id_can() {
+        let data = UiData::default();
+        let hermes_provider = Provider::with_id(
+            "fixed-id".to_string(),
+            "Hermes".to_string(),
+            json!({"_cc_source": "custom_providers"}),
+            None,
+        );
+        let mut hermes = App::new(Some(AppType::Hermes));
+        hermes.form = Some(FormState::ProviderAdd(ProviderAddFormState::from_provider(
+            AppType::Hermes,
+            &hermes_provider,
+        )));
+
+        hermes.on_key(key(KeyCode::Enter), &data);
+        hermes.on_key(key(KeyCode::Char('x')), &data);
+        hermes.on_key(key(KeyCode::Backspace), &data);
+        let Some(FormState::ProviderAdd(form)) = hermes.form.as_ref() else {
+            panic!("expected Hermes form");
+        };
+        assert!(!form.editing);
+        assert_eq!(form.id.value, "fixed-id");
+
+        let mut openclaw = App::new(Some(AppType::OpenClaw));
+        openclaw.form = Some(FormState::ProviderAdd(ProviderAddFormState::new(
+            AppType::OpenClaw,
+        )));
+        if let Some(FormState::ProviderAdd(form)) = openclaw.form.as_mut() {
+            form.focus = FormFocus::Fields;
+        }
+        openclaw.on_key(key(KeyCode::Enter), &data);
+        openclaw.on_key(key(KeyCode::Char('x')), &data);
+        let Some(FormState::ProviderAdd(form)) = openclaw.form.as_ref() else {
+            panic!("expected OpenClaw form");
+        };
+        assert!(form.editing);
+        assert_eq!(form.id.value, "x");
+    }
+
+    #[test]
+    #[serial]
+    fn hermes_provider_rename_runtime_rewrites_detail_clears_filter_and_reloads() {
+        let temp_home = TempDir::new().expect("temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+        let config_path = crate::hermes_config::get_hermes_config_path();
+        std::fs::create_dir_all(config_path.parent().expect("Hermes config parent"))
+            .expect("create Hermes config dir");
+        std::fs::write(
+            &config_path,
+            r#"model:
+  provider: custom:old-id
+  default: test-model
+custom_providers:
+  - name: old-id
+    base_url: https://example.com/v1
+    models:
+      test-model: {}
+"#,
+        )
+        .expect("seed Hermes config");
+
+        let state = crate::AppState::try_new().expect("create app state");
+        {
+            let mut config = state.config.write().expect("lock app config");
+            config.ensure_app(&AppType::Hermes);
+            config
+                .get_manager_mut(&AppType::Hermes)
+                .expect("Hermes manager")
+                .providers
+                .insert(
+                    "old-id".to_string(),
+                    Provider::with_id(
+                        "old-id".to_string(),
+                        "Friendly Name".to_string(),
+                        json!({
+                            "name": "old-id",
+                            "base_url": "https://example.com/v1",
+                            "models": [{"id": "test-model"}],
+                            crate::hermes_config::PROVIDER_SOURCE_FIELD:
+                                crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST
+                        }),
+                        None,
+                    ),
+                );
+        }
+        state.save().expect("persist Hermes provider");
+
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::ProviderDetail {
+            id: "old-id".to_string(),
+        };
+        app.filter.active = true;
+        app.filter.input.set("old-id");
+        let mut data = UiData::load(&AppType::Hermes).expect("load Hermes data");
+
+        run_runtime_action(
+            &mut app,
+            &mut data,
+            Action::HermesProviderRename {
+                old_id: "old-id".to_string(),
+                new_id: "new-id".to_string(),
+            },
+        )
+        .expect("rename Hermes provider");
+
+        assert!(matches!(
+            app.route,
+            Route::ProviderDetail { ref id } if id == "new-id"
+        ));
+        assert!(!app.filter.active);
+        assert!(app.filter.input.value.is_empty());
+        assert!(data.providers.rows.iter().any(|row| row.id == "new-id"));
+        assert!(!data.providers.rows.iter().any(|row| row.id == "old-id"));
+        assert!(matches!(
+            app.toast.as_ref(),
+            Some(toast)
+                if toast.kind == ToastKind::Success
+                    && toast.message == texts::tui_toast_hermes_provider_renamed()
+        ));
+
+        let mut noop_app = App::new(Some(AppType::Hermes));
+        let mut noop_data = UiData::load(&AppType::Hermes).expect("reload Hermes data");
+        run_runtime_action(
+            &mut noop_app,
+            &mut noop_data,
+            Action::HermesProviderRename {
+                old_id: "new-id".to_string(),
+                new_id: "new-id".to_string(),
+            },
+        )
+        .expect("same ID rename should be a no-op");
+        assert!(noop_app.toast.is_none());
+        assert!(noop_data
+            .providers
+            .rows
+            .iter()
+            .any(|row| row.id == "new-id"));
+    }
+
+    #[test]
+    fn hermes_provider_rename_text_is_localized() {
+        let english = use_test_language(Language::English);
+        assert_eq!(texts::tui_key_rename(), "rename");
+        assert!(texts::tui_hermes_provider_rename_title().contains("Hermes"));
+        assert!(texts::tui_toast_hermes_provider_rename_blank().contains("blank"));
+        drop(english);
+
+        let _chinese = use_test_language(Language::Chinese);
+        assert_eq!(texts::tui_key_rename(), "重命名");
+        assert!(texts::tui_hermes_provider_rename_title().contains("重命名"));
+        assert!(texts::tui_toast_hermes_provider_rename_blank().contains("不能为空"));
+        assert_eq!(texts::tui_read_only(), "只读");
+    }
+
     #[test]
     fn hermes_builtin_provider_space_requests_switch() {
         let mut app = App::new(Some(AppType::Hermes));

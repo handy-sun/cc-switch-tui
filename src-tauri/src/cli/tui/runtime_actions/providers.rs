@@ -12,7 +12,32 @@ use super::super::data::{load_state, UiData};
 use super::super::form::{FormState, ProviderAddField};
 use super::super::runtime_systems::{next_model_fetch_request_id, ModelFetchReq, StreamCheckReq};
 use super::super::text_edit::TextInput;
+use super::helpers::select_provider_by_id;
 use super::RuntimeActionContext;
+
+pub(super) fn rename_hermes(
+    ctx: &mut RuntimeActionContext<'_>,
+    old_id: String,
+    new_id: String,
+) -> Result<(), AppError> {
+    let state = load_state()?;
+    let renamed = ProviderService::rename_hermes_provider(&state, &old_id, &new_id)?;
+    *ctx.data = UiData::load(&ctx.app.app_type)?;
+    if !renamed {
+        return Ok(());
+    }
+
+    if matches!(&ctx.app.route, super::super::route::Route::ProviderDetail { id } if id == &old_id)
+    {
+        ctx.app.route = super::super::route::Route::ProviderDetail { id: new_id.clone() };
+    }
+    select_provider_by_id(ctx.app, ctx.data, &new_id);
+    ctx.app.push_toast(
+        texts::tui_toast_hermes_provider_renamed(),
+        ToastKind::Success,
+    );
+    Ok(())
+}
 
 fn active_proxy_failover_queue_guard_message() -> &'static str {
     crate::t!(
