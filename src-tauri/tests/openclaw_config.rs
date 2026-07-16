@@ -74,7 +74,12 @@ mod config {
     pub fn home_dir() -> Option<PathBuf> {
         crate::test_support::test_home_override()
             .or_else(|| std::env::var_os("CC_SWITCH_TEST_HOME").map(PathBuf::from))
-            .or_else(dirs::home_dir)
+            .or_else(|| {
+                Some(
+                    std::env::temp_dir()
+                        .join(format!("cc-switch-test-home-{}", std::process::id())),
+                )
+            })
     }
 
     pub fn get_app_config_dir() -> PathBuf {
@@ -260,14 +265,17 @@ struct TestHomeEnvGuard {
 }
 
 impl TestHomeEnvGuard {
-    fn set(home: &Path, test_home: &Path) -> Self {
+    fn set(home: &Path, test_home: Option<&Path>) -> Self {
         let lock = test_support::lock_test_home_and_settings();
         let old_home = std::env::var_os("HOME");
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let old_override = test_support::test_home_override();
 
         std::env::set_var("HOME", home);
-        std::env::set_var("CC_SWITCH_TEST_HOME", test_home);
+        match test_home {
+            Some(path) => std::env::set_var("CC_SWITCH_TEST_HOME", path),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
         test_support::set_test_home_override(None);
 
         Self {
@@ -298,12 +306,24 @@ impl Drop for TestHomeEnvGuard {
 fn mock_app_config_dir_prefers_test_home_and_current_directory_name() {
     let home = tempfile::tempdir().expect("create parent home");
     let test_home = tempfile::tempdir().expect("create test home");
-    let _env = TestHomeEnvGuard::set(home.path(), test_home.path());
+    let _env = TestHomeEnvGuard::set(home.path(), Some(test_home.path()));
 
     assert_eq!(
         config::get_app_config_dir(),
         test_home.path().join(".cc-switch-tui")
     );
+}
+
+#[test]
+#[serial]
+fn mock_app_config_dir_never_falls_back_to_home() {
+    let home = tempfile::tempdir().expect("create parent home");
+    let _env = TestHomeEnvGuard::set(home.path(), None);
+    let expected = std::env::temp_dir()
+        .join(format!("cc-switch-test-home-{}", std::process::id()))
+        .join(".cc-switch-tui");
+
+    assert_eq!(config::get_app_config_dir(), expected);
 }
 
 struct FixtureGuard {
