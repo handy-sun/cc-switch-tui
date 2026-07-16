@@ -3,7 +3,7 @@ use serial_test::serial;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod error {
     use std::path::Path;
@@ -72,13 +72,15 @@ mod config {
     use crate::error::AppError;
 
     pub fn home_dir() -> Option<PathBuf> {
-        crate::test_support::test_home_override().or_else(dirs::home_dir)
+        crate::test_support::test_home_override()
+            .or_else(|| std::env::var_os("CC_SWITCH_TEST_HOME").map(PathBuf::from))
+            .or_else(dirs::home_dir)
     }
 
     pub fn get_app_config_dir() -> PathBuf {
         home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(".cc-switch")
+            .join(".cc-switch-tui")
     }
 
     pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
@@ -249,6 +251,60 @@ use openclaw_config_impl::{
 };
 use settings::{get_settings, update_settings, AppSettings};
 use tempfile::TempDir;
+
+struct TestHomeEnvGuard {
+    _lock: test_support::TestHomeSettingsLock,
+    old_home: Option<OsString>,
+    old_test_home: Option<OsString>,
+    old_override: Option<PathBuf>,
+}
+
+impl TestHomeEnvGuard {
+    fn set(home: &Path, test_home: &Path) -> Self {
+        let lock = test_support::lock_test_home_and_settings();
+        let old_home = std::env::var_os("HOME");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let old_override = test_support::test_home_override();
+
+        std::env::set_var("HOME", home);
+        std::env::set_var("CC_SWITCH_TEST_HOME", test_home);
+        test_support::set_test_home_override(None);
+
+        Self {
+            _lock: lock,
+            old_home,
+            old_test_home,
+            old_override,
+        }
+    }
+}
+
+impl Drop for TestHomeEnvGuard {
+    fn drop(&mut self) {
+        match self.old_home.take() {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match self.old_test_home.take() {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        test_support::set_test_home_override(self.old_override.as_deref());
+    }
+}
+
+#[test]
+#[serial]
+fn mock_app_config_dir_prefers_test_home_and_current_directory_name() {
+    let home = tempfile::tempdir().expect("create parent home");
+    let test_home = tempfile::tempdir().expect("create test home");
+    let _env = TestHomeEnvGuard::set(home.path(), test_home.path());
+
+    assert_eq!(
+        config::get_app_config_dir(),
+        test_home.path().join(".cc-switch-tui")
+    );
+}
 
 struct FixtureGuard {
     _temp: TempDir,
