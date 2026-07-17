@@ -12,6 +12,9 @@ impl App {
         if let Some(action) = self.handle_claude_api_format_picker_key(key, data) {
             return Some(action);
         }
+        if let Some(action) = self.handle_hermes_user_agent_picker_key(key) {
+            return Some(action);
+        }
         if let Some(action) = self.handle_provider_test_menu_key(key, data) {
             return Some(action);
         }
@@ -52,6 +55,63 @@ impl App {
             return Some(action);
         }
         None
+    }
+
+    fn handle_hermes_user_agent_picker_key(&mut self, key: KeyEvent) -> Option<Action> {
+        let Overlay::HermesUserAgentPicker { selected } = &mut self.overlay else {
+            return None;
+        };
+
+        Some(match key.code {
+            KeyCode::Esc => {
+                self.overlay = Overlay::None;
+                Action::None
+            }
+            KeyCode::Up => {
+                *selected = selected.saturating_sub(1);
+                Action::None
+            }
+            KeyCode::Down => {
+                *selected = (*selected + 1).min(
+                    crate::cli::tui::form::HermesUserAgentPreset::ALL
+                        .len()
+                        .saturating_sub(1),
+                );
+                Action::None
+            }
+            KeyCode::Enter => {
+                let preset =
+                    crate::cli::tui::form::HermesUserAgentPreset::from_picker_index(*selected);
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    self.overlay = Overlay::None;
+                    return Some(Action::None);
+                };
+
+                if let Some(value) = preset.fixed_value() {
+                    provider.set_hermes_user_agent(value);
+                    self.overlay = Overlay::None;
+                } else {
+                    let current = provider.hermes_user_agent.value.trim();
+                    let custom =
+                        if crate::cli::tui::form::HermesUserAgentPreset::picker_index_for(current)
+                            == crate::cli::tui::form::HermesUserAgentPreset::ALL.len() - 1
+                        {
+                            current
+                        } else {
+                            ""
+                        };
+                    self.overlay = Overlay::TextInput(TextInputState {
+                        title: texts::tui_hermes_user_agent_custom_title().to_string(),
+                        prompt: texts::tui_hermes_user_agent_custom_prompt().to_string(),
+                        input: TextInput::new(custom),
+                        submit: TextSubmit::HermesUserAgentCustom,
+                        secret: false,
+                    });
+                }
+                Action::None
+            }
+            _ => Action::None,
+        })
     }
 
     fn handle_codex_current_provider_mismatch_key(&mut self, key: KeyEvent) -> Option<Action> {

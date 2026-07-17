@@ -320,6 +320,7 @@ pub(crate) fn provider_field_label_and_value(
         ProviderAddField::OpenClawApiProtocol => texts::tui_label_openclaw_api().to_string(),
         ProviderAddField::OpenClawUserAgent => texts::tui_label_openclaw_user_agent().to_string(),
         ProviderAddField::OpenClawModels => texts::tui_label_openclaw_models().to_string(),
+        ProviderAddField::HermesUserAgent => "User-Agent".to_string(),
         ProviderAddField::HermesModels => texts::tui_label_hermes_models().to_string(),
         ProviderAddField::OpenCodeNpmPackage => {
             if provider.app_type == AppType::OpenClaw {
@@ -381,6 +382,7 @@ pub(crate) fn provider_field_label_and_value(
             }
         }
         ProviderAddField::OpenClawModels => provider.openclaw_models_summary(),
+        ProviderAddField::HermesUserAgent => provider.hermes_user_agent.value.trim().to_string(),
         ProviderAddField::HermesModels => provider.hermes_models_summary(),
         ProviderAddField::CommonConfigDivider => "- - - - - - - - - -".to_string(),
         ProviderAddField::CommonSnippet => texts::tui_key_open().to_string(),
@@ -481,6 +483,9 @@ pub(crate) fn provider_field_editor_line(
                 format!("send_user_agent = {}", provider.openclaw_user_agent)
             }
             ProviderAddField::OpenClawModels => texts::tui_openclaw_models_open_hint().to_string(),
+            ProviderAddField::HermesUserAgent => {
+                texts::tui_hermes_user_agent_open_hint().to_string()
+            }
             ProviderAddField::HermesModels => texts::tui_hermes_models_open_hint().to_string(),
             _ => String::new(),
         };

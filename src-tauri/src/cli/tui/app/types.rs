@@ -94,6 +94,7 @@ pub enum TextSubmit {
     HermesProviderRename {
         old_id: String,
     },
+    HermesUserAgentCustom,
     SettingsProxyListenAddress,
     SettingsProxyListenPort,
     SettingsOpenClawConfigDir,
@@ -277,6 +278,9 @@ pub enum Overlay {
         selected: usize,
     },
     HermesModelsPicker {
+        selected: usize,
+    },
+    HermesUserAgentPicker {
         selected: usize,
     },
     HermesModelEntryEditor(HermesModelEntryEditorState),

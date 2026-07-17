@@ -368,6 +368,90 @@ pub(super) fn render_provider_test_menu_overlay(
     frame.render_stateful_widget(list, body_area, &mut state);
 }
 
+pub(super) fn render_hermes_user_agent_picker_overlay(
+    frame: &mut Frame<'_>,
+    app: &App,
+    content_area: Rect,
+    theme: &theme::Theme,
+    selected: usize,
+) {
+    use crate::cli::tui::form::HermesUserAgentPreset;
+
+    let area = centered_rect_fixed(72, 12, content_area);
+    frame.render_widget(Clear, area);
+
+    let outer = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(overlay_border_style(theme, false))
+        .title(texts::tui_hermes_user_agent_popup_title());
+    frame.render_widget(outer.clone(), area);
+    let inner = outer.inner(area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+
+    render_key_bar_center(
+        frame,
+        chunks[0],
+        theme,
+        &[
+            ("↑↓", texts::tui_key_select()),
+            ("Enter", texts::tui_key_apply()),
+            ("Esc", texts::tui_key_close()),
+        ],
+    );
+
+    let current = app
+        .form
+        .as_ref()
+        .and_then(|form| match form {
+            FormState::ProviderAdd(provider) => Some(provider.hermes_user_agent.value.trim()),
+            _ => None,
+        })
+        .unwrap_or("");
+    let current_index = HermesUserAgentPreset::picker_index_for(current);
+    let custom_value = if current_index == HermesUserAgentPreset::ALL.len() - 1 {
+        current
+    } else {
+        ""
+    };
+    let items = HermesUserAgentPreset::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(index, preset)| {
+            let marker = if index == current_index {
+                texts::tui_marker_active()
+            } else {
+                texts::tui_marker_inactive()
+            };
+            let label = match preset {
+                HermesUserAgentPreset::None => texts::tui_hermes_user_agent_not_set(),
+                HermesUserAgentPreset::CodexCli => "Codex CLI",
+                HermesUserAgentPreset::ClaudeCode => "Claude Code",
+                HermesUserAgentPreset::Browser => texts::tui_hermes_user_agent_browser(),
+                HermesUserAgentPreset::Custom => texts::tui_hermes_user_agent_custom(),
+            };
+            let value = preset.fixed_value().unwrap_or(custom_value);
+            let text = if value.is_empty() {
+                format!("{marker}  {label}")
+            } else {
+                format!("{marker}  {label}: {value}")
+            };
+            ListItem::new(Line::from(Span::raw(text)))
+        });
+
+    let list = List::new(items)
+        .highlight_style(selection_style(theme))
+        .highlight_symbol(highlight_symbol(theme));
+    let mut state = ListState::default();
+    state.select(Some(
+        selected.min(HermesUserAgentPreset::ALL.len().saturating_sub(1)),
+    ));
+    frame.render_stateful_widget(list, chunks[1], &mut state);
+}
+
 pub(super) fn render_model_fetch_picker_overlay(
     frame: &mut Frame<'_>,
     content_area: Rect,

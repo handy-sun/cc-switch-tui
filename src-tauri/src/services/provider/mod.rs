@@ -1336,6 +1336,7 @@ impl ProviderService {
         // 归一化 Claude 模型键
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         if matches!(app_type, AppType::Hermes) {
+            crate::hermes_config::take_provider_removal_markers(&mut provider.settings_config);
             crate::hermes_config::normalize_provider_settings_for_storage(
                 &provider.id,
                 &mut provider.settings_config,
@@ -1589,12 +1590,17 @@ impl ProviderService {
         let mut provider = provider;
         // 归一化 Claude 模型键
         Self::normalize_provider_if_claude(&app_type, &mut provider);
-        if matches!(app_type, AppType::Hermes) {
+        let hermes_explicit_removed_fields = if matches!(app_type, AppType::Hermes) {
+            let removed =
+                crate::hermes_config::take_provider_removal_markers(&mut provider.settings_config);
             crate::hermes_config::normalize_provider_settings_for_storage(
                 &provider.id,
                 &mut provider.settings_config,
             )?;
-        }
+            removed
+        } else {
+            Vec::new()
+        };
         Self::validate_provider_settings(&app_type, &provider)?;
         let provider_id = provider.id.clone();
         let update_hermes_switch_defaults = matches!(app_type, AppType::Hermes)
@@ -1672,15 +1678,21 @@ impl ProviderService {
                 common_config_snippet.as_deref(),
             )?;
             let hermes_removed_fields = if matches!(app_type_clone, AppType::Hermes) {
-                previous_settings
-                    .as_ref()
-                    .map(|previous| {
-                        crate::hermes_config::removed_provider_fields(
-                            previous,
-                            &merged.settings_config,
-                        )
-                    })
-                    .unwrap_or_default()
+                let mut removed = hermes_explicit_removed_fields.clone();
+                removed.extend(
+                    previous_settings
+                        .as_ref()
+                        .map(|previous| {
+                            crate::hermes_config::removed_provider_fields(
+                                previous,
+                                &merged.settings_config,
+                            )
+                        })
+                        .unwrap_or_default(),
+                );
+                removed.sort();
+                removed.dedup();
+                removed
             } else {
                 Vec::new()
             };

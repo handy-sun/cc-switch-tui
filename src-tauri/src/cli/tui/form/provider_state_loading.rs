@@ -221,6 +221,15 @@ fn populate_hermes_form(form: &mut ProviderAddFormState, provider: &Provider) {
         provider
     };
     populate_openclaw_like_form(form, provider, true);
+    if let Some(user_agent) = provider
+        .settings_config
+        .get("headers")
+        .and_then(Value::as_object)
+        .and_then(|headers| headers.get("User-Agent"))
+        .and_then(Value::as_str)
+    {
+        form.hermes_user_agent.set(user_agent);
+    }
     for model in &mut form.openclaw_models {
         normalize_hermes_model_fields(model);
     }

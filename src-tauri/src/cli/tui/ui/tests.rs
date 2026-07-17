@@ -692,6 +692,66 @@ fn hermes_models_picker_and_editor_render_structured_fields() {
 }
 
 #[test]
+fn hermes_user_agent_picker_renders_presets_and_custom_value() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Hermes));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Hermes);
+    form.hermes_user_agent.set("my-client/1.2.3");
+    app.form = Some(FormState::ProviderAdd(form));
+    app.overlay = Overlay::HermesUserAgentPicker { selected: 4 };
+
+    let all = all_text(&render(&app, &minimal_data(&app.app_type)));
+
+    assert!(all.contains("Hermes User-Agent"), "{all}");
+    assert!(all.contains("Not set"), "{all}");
+    assert!(all.contains("Codex CLI"), "{all}");
+    assert!(all.contains("codex_cli_rs/0.0.0"), "{all}");
+    assert!(all.contains("Claude Code"), "{all}");
+    assert!(all.contains("claude-code/0.1.0"), "{all}");
+    assert!(all.contains("Browser"), "{all}");
+    assert!(all.contains("Mozilla/5.0"), "{all}");
+    assert!(all.contains("Custom"), "{all}");
+    assert!(all.contains("my-client/1.2.3"), "{all}");
+}
+
+#[test]
+fn hermes_user_agent_picker_does_not_repeat_fixed_value_as_custom() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Hermes));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Hermes);
+    form.hermes_user_agent.set("codex_cli_rs/0.0.0");
+    app.form = Some(FormState::ProviderAdd(form));
+    app.overlay = Overlay::HermesUserAgentPicker { selected: 1 };
+
+    let all = all_text(&render(&app, &minimal_data(&app.app_type)));
+
+    assert_eq!(all.matches("codex_cli_rs/0.0.0").count(), 2, "{all}");
+}
+
+#[test]
+fn hermes_user_agent_form_field_shows_selected_value() {
+    let _lang = use_test_language(Language::Chinese);
+    let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Hermes);
+    form.hermes_user_agent.set("claude-code/0.1.0");
+
+    let (label, value) =
+        super::provider_field_label_and_value(&form, ProviderAddField::HermesUserAgent);
+
+    assert_eq!(label, "User-Agent");
+    assert_eq!(value, "claude-code/0.1.0");
+}
+
+#[test]
 fn provider_form_fields_show_dashed_divider_before_common_snippet() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -7280,6 +7340,20 @@ fn provider_form_model_field_enter_hint_uses_fetch_model() {
         .find(|(key, _label)| *key == "Enter")
         .map(|(_key, label)| *label);
     assert_eq!(enter_label, Some(texts::tui_key_fetch_model()));
+}
+
+#[test]
+fn provider_form_hermes_user_agent_enter_hint_uses_open() {
+    let keys = super::add_form_key_items(
+        FormFocus::Fields,
+        false,
+        Some(ProviderAddField::HermesUserAgent),
+    );
+    let enter_label = keys
+        .iter()
+        .find(|(key, _label)| *key == "Enter")
+        .map(|(_key, label)| *label);
+    assert_eq!(enter_label, Some(texts::tui_key_open()));
 }
 
 #[test]

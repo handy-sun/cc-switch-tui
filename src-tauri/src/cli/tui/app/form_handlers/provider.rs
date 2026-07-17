@@ -309,6 +309,19 @@ impl App {
                 }
                 Action::None
             }
+            ProviderAddField::HermesUserAgent => {
+                if matches!(key.code, KeyCode::Enter) {
+                    let Some(FormState::ProviderAdd(provider)) = self.form.as_ref() else {
+                        return Action::None;
+                    };
+                    self.overlay = Overlay::HermesUserAgentPicker {
+                        selected: crate::cli::tui::form::HermesUserAgentPreset::picker_index_for(
+                            &provider.hermes_user_agent.value,
+                        ),
+                    };
+                }
+                Action::None
+            }
             ProviderAddField::CommonSnippet => {
                 if matches!(key.code, KeyCode::Enter) {
                     let Some(FormState::ProviderAdd(provider)) = self.form.as_ref() else {

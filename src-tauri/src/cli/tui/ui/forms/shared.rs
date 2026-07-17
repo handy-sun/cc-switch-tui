@@ -42,6 +42,7 @@ pub(crate) fn add_form_key_items(
                         ProviderAddField::ClaudeModelConfig
                         | ProviderAddField::CommonSnippet
                         | ProviderAddField::OpenClawModels
+                        | ProviderAddField::HermesUserAgent
                         | ProviderAddField::HermesModels,
                     ) => texts::tui_key_open(),
                     Some(

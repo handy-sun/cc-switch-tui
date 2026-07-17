@@ -925,9 +925,9 @@ pub fn validate_provider_settings(
     normalize_provider_settings_for_storage(provider_id, &mut normalized)
 }
 
-/// Return canonical top-level fields that existed in the stored provider but
-/// were explicitly omitted by an update. Live-only fields are not present in
-/// the stored snapshot and therefore remain eligible for forward-compatible
+/// Return canonical fields that existed in the stored provider but were
+/// explicitly omitted by an update. Live-only fields are not present in the
+/// stored snapshot and therefore remain eligible for forward-compatible
 /// preservation by the YAML merge.
 pub(crate) fn removed_provider_fields(
     previous: &serde_json::Value,
@@ -953,9 +953,93 @@ pub(crate) fn removed_provider_fields(
         })
         .map(str::to_string)
         .collect();
+    if let (Some(previous_headers), Some(updated_headers)) = (
+        previous
+            .get("headers")
+            .and_then(serde_json::Value::as_object),
+        updated
+            .as_object()
+            .and_then(|updated| updated.get("headers"))
+            .and_then(serde_json::Value::as_object),
+    ) {
+        removed.extend(
+            previous_headers
+                .keys()
+                .filter(|key| !updated_headers.contains_key(*key))
+                .map(|key| format!("headers.{key}")),
+        );
+    }
     removed.sort();
     removed.dedup();
     removed
+}
+
+/// Consume a null User-Agent as an explicit nested-field removal marker.
+/// Callers must do this before normalizing or persisting provider settings.
+pub(crate) fn take_provider_removal_markers(config: &mut serde_json::Value) -> Vec<String> {
+    let Some(settings) = config.as_object_mut() else {
+        return Vec::new();
+    };
+    let Some(headers) = settings
+        .get_mut("headers")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return Vec::new();
+    };
+
+    if !headers
+        .get("User-Agent")
+        .is_some_and(|value| value.is_null())
+    {
+        return Vec::new();
+    }
+    headers.remove("User-Agent");
+    if headers.is_empty() {
+        settings.remove("headers");
+    }
+    vec!["headers.User-Agent".to_string()]
+}
+
+fn merge_existing_hermes_header_fields(
+    existing: &serde_yaml::Mapping,
+    updated: &mut serde_yaml::Mapping,
+    removed_fields: &HashSet<String>,
+) -> bool {
+    let headers_key = serde_yaml::Value::String("headers".to_string());
+    if removed_fields.contains("headers") {
+        return false;
+    }
+    let Some(existing_headers) = existing
+        .get(&headers_key)
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return false;
+    };
+    let updated_headers = updated
+        .get(&headers_key)
+        .and_then(serde_yaml::Value::as_mapping)
+        .cloned();
+    let has_nested_removals = removed_fields
+        .iter()
+        .any(|field| field.starts_with("headers."));
+    if updated_headers.is_none() && !has_nested_removals {
+        return false;
+    }
+
+    let mut merged = existing_headers.clone();
+    merged.retain(|key, _value| {
+        key.as_str()
+            .is_none_or(|key| !removed_fields.contains(&format!("headers.{key}")))
+    });
+    if let Some(updated_headers) = updated_headers {
+        merged.extend(updated_headers);
+    }
+    if merged.is_empty() {
+        updated.remove(&headers_key);
+    } else {
+        updated.insert(headers_key, serde_yaml::Value::Mapping(merged));
+    }
+    true
 }
 
 /// If `config.models` is a JSON array, convert it in-place to the dict shape.
@@ -1361,9 +1445,14 @@ pub fn set_provider_with_removed_fields(
     // before touching models / YAML — avoids writing non-Hermes fields back.
     let mut normalized = provider_config;
     normalize_provider_settings_for_storage(name, &mut normalized)?;
-    let removed_fields: HashSet<&str> = removed_fields
+    let removed_fields: HashSet<String> = removed_fields
         .iter()
-        .map(|field| canonical_hermes_provider_key(field))
+        .map(|field| {
+            field.split_once('.').map_or_else(
+                || canonical_hermes_provider_key(field).to_string(),
+                |(parent, child)| format!("{}.{child}", canonical_hermes_provider_key(parent)),
+            )
+        })
         .collect();
     let models_were_explicit = normalized
         .as_object()
@@ -1415,10 +1504,15 @@ pub fn set_provider_with_removed_fields(
         if let (Some(existing_map), serde_yaml::Value::Mapping(new_map)) =
             (existing.as_mapping(), &mut yaml_val)
         {
+            let headers_merged =
+                merge_existing_hermes_header_fields(existing_map, new_map, &removed_fields);
             if models_were_explicit {
                 merge_existing_hermes_model_fields(existing_map, new_map);
             }
             for (k, v) in existing_map {
+                if headers_merged && k.as_str() == Some("headers") {
+                    continue;
+                }
                 if models_were_explicit && matches!(k.as_str(), Some("model") | Some("models")) {
                     continue;
                 }

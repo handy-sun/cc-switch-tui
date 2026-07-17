@@ -88,6 +88,15 @@ pub(crate) fn render_overlay(
                 *selected,
             )
         }
+        Overlay::HermesUserAgentPicker { selected } => {
+            super::pickers::render_hermes_user_agent_picker_overlay(
+                frame,
+                app,
+                content_area,
+                theme,
+                *selected,
+            )
+        }
         Overlay::CodexCurrentProviderMismatch { selected, mismatch } => {
             super::pickers::render_codex_current_provider_mismatch_overlay(
                 frame,

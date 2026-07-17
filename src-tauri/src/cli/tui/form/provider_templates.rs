@@ -261,6 +261,8 @@ impl ProviderAddFormState {
                     self.gemini_base_url = defaults.gemini_base_url;
                     self.gemini_model = defaults.gemini_model;
                     self.openclaw_user_agent = defaults.openclaw_user_agent;
+                    self.hermes_user_agent = defaults.hermes_user_agent;
+                    self.hermes_user_agent_touched = defaults.hermes_user_agent_touched;
                     self.openclaw_models = defaults.openclaw_models;
                     self.hermes_models_touched = defaults.hermes_models_touched;
                     self.opencode_npm_package = defaults.opencode_npm_package;
@@ -424,6 +426,8 @@ impl ProviderAddFormState {
                     self.opencode_base_url.set(preset.claude_base_url);
                     self.opencode_npm_package.set("anthropic-messages");
                     self.openclaw_user_agent = false;
+                    self.hermes_user_agent.set("");
+                    self.hermes_user_agent_touched = false;
                     self.openclaw_models = vec![
                         json!({
                             "id": "claude-opus-4-6",

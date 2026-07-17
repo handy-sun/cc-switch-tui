@@ -168,6 +168,7 @@ pub enum ProviderAddField {
     OpenClawApiProtocol,
     OpenClawUserAgent,
     OpenClawModels,
+    HermesUserAgent,
     HermesModels,
     OpenCodeNpmPackage,
     OpenCodeApiKey,
@@ -179,6 +180,47 @@ pub enum ProviderAddField {
     CommonConfigDivider,
     CommonSnippet,
     IncludeCommonConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HermesUserAgentPreset {
+    None,
+    CodexCli,
+    ClaudeCode,
+    Browser,
+    Custom,
+}
+
+impl HermesUserAgentPreset {
+    pub const ALL: [Self; 5] = [
+        Self::None,
+        Self::CodexCli,
+        Self::ClaudeCode,
+        Self::Browser,
+        Self::Custom,
+    ];
+
+    pub fn from_picker_index(index: usize) -> Self {
+        Self::ALL.get(index).copied().unwrap_or(Self::None)
+    }
+
+    pub fn fixed_value(self) -> Option<&'static str> {
+        match self {
+            Self::None => Some(""),
+            Self::CodexCli => Some("codex_cli_rs/0.0.0"),
+            Self::ClaudeCode => Some("claude-code/0.1.0"),
+            Self::Browser => Some("Mozilla/5.0"),
+            Self::Custom => None,
+        }
+    }
+
+    pub fn picker_index_for(value: &str) -> usize {
+        let value = value.trim();
+        Self::ALL
+            .iter()
+            .position(|preset| preset.fixed_value().is_some_and(|fixed| fixed == value))
+            .unwrap_or(Self::ALL.len() - 1)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,6 +301,8 @@ pub struct ProviderAddFormState {
     pub gemini_model: TextInput,
 
     pub openclaw_user_agent: bool,
+    pub hermes_user_agent: TextInput,
+    hermes_user_agent_touched: bool,
     pub openclaw_models: Vec<Value>,
     hermes_models_touched: bool,
     pub opencode_npm_package: TextInput,

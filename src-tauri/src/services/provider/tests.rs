@@ -2126,7 +2126,10 @@ fn hermes_update_persists_structured_model_parameters_to_db_and_live_config() {
         json!({
             "base_url": "https://hermes.example/v1",
             "api_key": "sk-hermes-test",
-            "headers": { "X-Test": "preserved" },
+            "headers": {
+                "User-Agent": "codex_cli_rs/0.0.0",
+                "X-Test": "preserved"
+            },
             "models": [{
                 "id": "gpt-5",
                 "context_length": 128000,
@@ -2153,6 +2156,10 @@ fn hermes_update_persists_structured_model_parameters_to_db_and_live_config() {
     assert_eq!(stored_model["reasoning_effort"], "high");
     assert!(stored_model.get("contextWindow").is_none());
     assert!(stored_model.get("maxTokens").is_none());
+    assert_eq!(
+        stored.settings_config["headers"]["User-Agent"],
+        "codex_cli_rs/0.0.0"
+    );
     assert_eq!(stored.settings_config["headers"]["X-Test"], "preserved");
 
     let yaml = crate::hermes_config::read_hermes_config().expect("read Hermes config");
@@ -2187,6 +2194,13 @@ fn hermes_update_persists_structured_model_parameters_to_db_and_live_config() {
             .get("reasoning_effort")
             .and_then(serde_yaml::Value::as_str),
         Some("high")
+    );
+    assert_eq!(
+        live_provider
+            .get("headers")
+            .and_then(|headers| headers.get("User-Agent"))
+            .and_then(serde_yaml::Value::as_str),
+        Some("codex_cli_rs/0.0.0")
     );
     assert_eq!(
         live_provider
@@ -2475,6 +2489,177 @@ custom_providers:
     assert!(live.get("headers").is_none());
     assert!(live.get("request_timeout_seconds").is_none());
     assert_eq!(live["live_only"], "keep-me");
+}
+
+#[test]
+#[serial]
+fn hermes_update_merges_headers_without_stripping_live_only_entries() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+custom_providers:
+  - name: custom
+    headers:
+      X-Live-Only: keep-me
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "custom".to_string(),
+            Provider::with_id(
+                "custom".to_string(),
+                "Custom Hermes".to_string(),
+                json!({}),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "custom".to_string(),
+        "Custom Hermes".to_string(),
+        json!({ "headers": { "User-Agent": "codex_cli_rs/0.0.0" } }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated).expect("update Hermes User-Agent");
+
+    let live = crate::hermes_config::get_provider("custom")
+        .expect("read live provider")
+        .expect("live provider should exist");
+    assert_eq!(live["headers"]["User-Agent"], "codex_cli_rs/0.0.0");
+    assert_eq!(live["headers"]["X-Live-Only"], "keep-me");
+}
+
+#[test]
+#[serial]
+fn hermes_update_null_header_removes_live_only_user_agent() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+custom_providers:
+  - name: custom
+    headers:
+      User-Agent: stale-client/1.0
+      X-Live-Only: keep-me
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "custom".to_string(),
+            Provider::with_id(
+                "custom".to_string(),
+                "Custom Hermes".to_string(),
+                json!({}),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "custom".to_string(),
+        "Custom Hermes".to_string(),
+        json!({ "headers": { "User-Agent": null } }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated).expect("clear Hermes User-Agent");
+
+    let stored = state
+        .db
+        .get_provider_by_id("custom", AppType::Hermes.as_str())
+        .expect("read stored provider")
+        .expect("stored provider should exist");
+    assert!(stored.settings_config.get("headers").is_none());
+
+    let live = crate::hermes_config::get_provider("custom")
+        .expect("read live provider")
+        .expect("live provider should exist");
+    assert!(live["headers"].get("User-Agent").is_none());
+    assert_eq!(live["headers"]["X-Live-Only"], "keep-me");
+}
+
+#[test]
+#[serial]
+fn hermes_update_removes_stored_user_agent_without_removing_sibling_headers() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let config_path = crate::hermes_config::get_hermes_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("hermes config parent"))
+        .expect("create hermes config dir");
+    std::fs::write(
+        &config_path,
+        r#"
+custom_providers:
+  - name: custom
+    headers:
+      User-Agent: stale-client/1.0
+      X-Keep: keep-me
+"#,
+    )
+    .expect("write Hermes config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    config
+        .get_manager_mut(&AppType::Hermes)
+        .expect("Hermes manager")
+        .providers
+        .insert(
+            "custom".to_string(),
+            Provider::with_id(
+                "custom".to_string(),
+                "Custom Hermes".to_string(),
+                json!({
+                    "headers": {
+                        "User-Agent": "stale-client/1.0",
+                        "X-Keep": "keep-me"
+                    }
+                }),
+                None,
+            ),
+        );
+    let state = state_from_config(config);
+
+    let updated = Provider::with_id(
+        "custom".to_string(),
+        "Custom Hermes".to_string(),
+        json!({ "headers": { "X-Keep": "keep-me" } }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Hermes, updated)
+        .expect("remove stored Hermes User-Agent");
+
+    let live = crate::hermes_config::get_provider("custom")
+        .expect("read live provider")
+        .expect("live provider should exist");
+    assert!(live["headers"].get("User-Agent").is_none());
+    assert_eq!(live["headers"]["X-Keep"], "keep-me");
 }
 
 #[test]

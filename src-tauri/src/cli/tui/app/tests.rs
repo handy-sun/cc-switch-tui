@@ -3570,6 +3570,105 @@ custom_providers:
         app.on_key(key(KeyCode::Enter), data);
     }
 
+    fn open_hermes_user_agent_picker(app: &mut App, data: &UiData) {
+        if app.form.is_none() {
+            app.on_key(key(KeyCode::Char('a')), data);
+            app.on_key(key(KeyCode::Enter), data);
+        }
+        let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
+            panic!("expected ProviderAdd form");
+        };
+        form.focus = super::super::form::FormFocus::Fields;
+        form.editing = false;
+        form.field_idx = form
+            .fields()
+            .iter()
+            .position(|field| *field == ProviderAddField::HermesUserAgent)
+            .expect("HermesUserAgent field should exist");
+        app.on_key(key(KeyCode::Enter), data);
+    }
+
+    #[test]
+    fn hermes_user_agent_picker_selects_codex_preset_and_preselects_current_value() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+
+        open_hermes_user_agent_picker(&mut app, &data);
+        assert!(matches!(
+            app.overlay,
+            Overlay::HermesUserAgentPicker { selected: 0 }
+        ));
+
+        app.on_key(key(KeyCode::Down), &data);
+        app.on_key(key(KeyCode::Enter), &data);
+
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected ProviderAdd form");
+        };
+        assert_eq!(form.hermes_user_agent.value, "codex_cli_rs/0.0.0");
+
+        open_hermes_user_agent_picker(&mut app, &data);
+        assert!(matches!(
+            app.overlay,
+            Overlay::HermesUserAgentPicker { selected: 1 }
+        ));
+    }
+
+    #[test]
+    fn hermes_user_agent_picker_none_emits_explicit_removal_marker() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+
+        open_hermes_user_agent_picker(&mut app, &data);
+        app.on_key(key(KeyCode::Enter), &data);
+
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected ProviderAdd form");
+        };
+        let provider = form.to_provider_json_value();
+        let user_agent = provider
+            .pointer("/settingsConfig/headers/User-Agent")
+            .expect("explicit None selection should emit a removal marker");
+        assert!(user_agent.is_null());
+    }
+
+    #[test]
+    fn hermes_user_agent_picker_accepts_custom_value() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+
+        open_hermes_user_agent_picker(&mut app, &data);
+        for _ in 0..4 {
+            app.on_key(key(KeyCode::Down), &data);
+        }
+        app.on_key(key(KeyCode::Enter), &data);
+
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::HermesUserAgentCustom,
+                ..
+            })
+        ));
+        let Overlay::TextInput(input) = &mut app.overlay else {
+            panic!("expected custom User-Agent input");
+        };
+        input.input.set("my-client/1.2.3");
+        app.on_key(key(KeyCode::Enter), &data);
+
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected ProviderAdd form");
+        };
+        assert_eq!(form.hermes_user_agent.value, "my-client/1.2.3");
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
     #[test]
     fn provider_add_form_hermes_models_enter_opens_structured_picker() {
         let mut app = App::new(Some(AppType::Hermes));

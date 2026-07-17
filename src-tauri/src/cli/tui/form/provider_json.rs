@@ -449,6 +449,25 @@ impl ProviderAddFormState {
                 set_or_remove_trimmed(settings_obj, "api_key", &self.opencode_api_key.value);
                 set_or_remove_trimmed(settings_obj, "base_url", &self.opencode_base_url.value);
 
+                let mut headers_obj = match settings_obj.remove("headers") {
+                    Some(Value::Object(map)) => map,
+                    _ => serde_json::Map::new(),
+                };
+                if self.hermes_user_agent_touched && self.hermes_user_agent.is_blank() {
+                    headers_obj.insert("User-Agent".to_string(), Value::Null);
+                } else {
+                    set_or_remove_trimmed(
+                        &mut headers_obj,
+                        "User-Agent",
+                        &self.hermes_user_agent.value,
+                    );
+                }
+                if headers_obj.is_empty() {
+                    settings_obj.remove("headers");
+                } else {
+                    settings_obj.insert("headers".to_string(), Value::Object(headers_obj));
+                }
+
                 let mut models = self.openclaw_models.clone();
                 for model in &mut models {
                     normalize_hermes_model_fields(model);

@@ -210,6 +210,27 @@ impl App {
                 }
                 Action::HermesProviderRename { old_id, new_id }
             }
+            TextSubmit::HermesUserAgentCustom => {
+                let user_agent = raw.trim().to_string();
+                if user_agent.is_empty() {
+                    self.push_toast(
+                        texts::tui_toast_hermes_user_agent_empty(),
+                        ToastKind::Warning,
+                    );
+                    self.overlay = Overlay::TextInput(TextInputState {
+                        title: texts::tui_hermes_user_agent_custom_title().to_string(),
+                        prompt: texts::tui_hermes_user_agent_custom_prompt().to_string(),
+                        input: TextInput::new(raw),
+                        submit: TextSubmit::HermesUserAgentCustom,
+                        secret: false,
+                    });
+                    return Action::None;
+                }
+                if let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() {
+                    provider.set_hermes_user_agent(user_agent);
+                }
+                Action::None
+            }
             TextSubmit::ConfigImport => {
                 if raw.is_empty() {
                     self.push_toast(texts::tui_toast_import_path_empty(), ToastKind::Warning);

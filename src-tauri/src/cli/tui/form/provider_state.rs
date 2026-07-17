@@ -68,6 +68,8 @@ impl ProviderAddFormState {
             gemini_base_url: TextInput::new("https://generativelanguage.googleapis.com"),
             gemini_model: TextInput::new(""),
             openclaw_user_agent: false,
+            hermes_user_agent: TextInput::new(""),
+            hermes_user_agent_touched: false,
             openclaw_models: Vec::new(),
             hermes_models_touched: false,
             opencode_npm_package: TextInput::new(openclaw_api_default),
@@ -204,6 +206,7 @@ impl ProviderAddFormState {
             AppType::Hermes => {
                 fields.push(ProviderAddField::OpenCodeApiKey);
                 fields.push(ProviderAddField::OpenCodeBaseUrl);
+                fields.push(ProviderAddField::HermesUserAgent);
                 fields.push(ProviderAddField::HermesModels);
             }
         }
@@ -251,6 +254,7 @@ impl ProviderAddFormState {
             | ProviderAddField::OpenClawApiProtocol
             | ProviderAddField::OpenClawUserAgent
             | ProviderAddField::OpenClawModels
+            | ProviderAddField::HermesUserAgent
             | ProviderAddField::HermesModels
             | ProviderAddField::CommonConfigDivider
             | ProviderAddField::CommonSnippet
@@ -297,6 +301,7 @@ impl ProviderAddFormState {
             | ProviderAddField::OpenClawApiProtocol
             | ProviderAddField::OpenClawUserAgent
             | ProviderAddField::OpenClawModels
+            | ProviderAddField::HermesUserAgent
             | ProviderAddField::HermesModels
             | ProviderAddField::CommonConfigDivider
             | ProviderAddField::CommonSnippet
@@ -405,6 +410,7 @@ impl ProviderAddFormState {
         let previous_include_common_config_touched = self.include_common_config_touched;
         let previous_extra = self.extra.clone();
         let previous_initial_snapshot = self.initial_snapshot.clone();
+        let previous_hermes_user_agent_touched = self.hermes_user_agent_touched;
         let previous_hermes_models_touched = self.hermes_models_touched;
 
         let mut next = Self::from_provider(self.app_type.clone(), provider);
@@ -445,6 +451,7 @@ impl ProviderAddFormState {
             next.id_is_manual = true;
         }
         next.initial_snapshot = previous_initial_snapshot;
+        next.hermes_user_agent_touched = previous_hermes_user_agent_touched;
         next.hermes_models_touched = previous_hermes_models_touched;
 
         *self = next;
@@ -465,7 +472,12 @@ impl ProviderAddFormState {
         let previous_include_common_config = self.include_common_config;
         let previous_include_common_config_touched = self.include_common_config_touched;
         let previous_initial_snapshot = self.initial_snapshot.clone();
+        let previous_hermes_user_agent_touched = self.hermes_user_agent_touched;
         let previous_hermes_models_touched = self.hermes_models_touched;
+        let hermes_user_agent_was_explicit = self.app_type == AppType::Hermes
+            && provider_value
+                .pointer("/settingsConfig/headers/User-Agent")
+                .is_some();
         let hermes_models_were_explicit = if self.app_type == AppType::Hermes {
             let edited_settings = provider_value
                 .get("settingsConfig")
@@ -540,10 +552,17 @@ impl ProviderAddFormState {
             next.id_is_manual = true;
         }
         next.initial_snapshot = previous_initial_snapshot;
+        next.hermes_user_agent_touched =
+            previous_hermes_user_agent_touched || hermes_user_agent_was_explicit;
         next.hermes_models_touched = previous_hermes_models_touched || hermes_models_were_explicit;
 
         *self = next;
         Ok(())
+    }
+
+    pub fn set_hermes_user_agent(&mut self, value: impl Into<String>) {
+        self.hermes_user_agent.set(value);
+        self.hermes_user_agent_touched = true;
     }
 
     pub fn toggle_include_common_config(&mut self, common_snippet: &str) -> Result<(), String> {

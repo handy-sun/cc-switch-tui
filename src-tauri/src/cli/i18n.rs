@@ -1622,6 +1622,66 @@ pub mod texts {
         }
     }
 
+    pub fn tui_hermes_user_agent_custom_title() -> &'static str {
+        if is_chinese() {
+            "自定义 User-Agent"
+        } else {
+            "Custom User-Agent"
+        }
+    }
+
+    pub fn tui_hermes_user_agent_custom_prompt() -> &'static str {
+        if is_chinese() {
+            "User-Agent 值"
+        } else {
+            "User-Agent value"
+        }
+    }
+
+    pub fn tui_hermes_user_agent_popup_title() -> &'static str {
+        "Hermes User-Agent"
+    }
+
+    pub fn tui_hermes_user_agent_not_set() -> &'static str {
+        if is_chinese() {
+            "不设置"
+        } else {
+            "Not set"
+        }
+    }
+
+    pub fn tui_hermes_user_agent_browser() -> &'static str {
+        if is_chinese() {
+            "浏览器"
+        } else {
+            "Browser"
+        }
+    }
+
+    pub fn tui_hermes_user_agent_custom() -> &'static str {
+        if is_chinese() {
+            "自定义"
+        } else {
+            "Custom"
+        }
+    }
+
+    pub fn tui_hermes_user_agent_open_hint() -> &'static str {
+        if is_chinese() {
+            "Enter 选择 User-Agent"
+        } else {
+            "Enter choose User-Agent"
+        }
+    }
+
+    pub fn tui_toast_hermes_user_agent_empty() -> &'static str {
+        if is_chinese() {
+            "User-Agent 不能为空；如需禁用请选择“不设置”"
+        } else {
+            "User-Agent cannot be empty; choose None to disable it"
+        }
+    }
+
     pub fn tui_label_openclaw_models() -> &'static str {
         if is_chinese() {
             "模型列表"

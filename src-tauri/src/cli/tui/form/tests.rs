@@ -2617,6 +2617,7 @@ fn provider_add_form_hermes_uses_dedicated_model_field() {
     let fields = form.fields();
 
     assert!(!fields.contains(&ProviderAddField::Id));
+    assert!(fields.contains(&ProviderAddField::HermesUserAgent));
     assert!(fields.contains(&ProviderAddField::HermesModels));
     assert!(!fields.contains(&ProviderAddField::OpenClawModels));
     assert!(!fields.contains(&ProviderAddField::OpenClawUserAgent));
@@ -2661,7 +2662,49 @@ fn provider_edit_form_hermes_preserves_headers_and_uses_native_credentials() {
     assert_eq!(settings["base_url"], "https://api.hermes.example/v1");
     assert!(settings.get("apiKey").is_none());
     assert!(settings.get("baseUrl").is_none());
+    assert_eq!(form.hermes_user_agent.value, "Hermes Web UI");
     assert_eq!(settings["headers"]["User-Agent"], "Hermes Web UI");
+    assert_eq!(settings["headers"]["X-Trace"], "1");
+}
+
+#[test]
+fn provider_add_form_hermes_writes_selected_user_agent_without_losing_other_headers() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({
+            "headers": { "X-Trace": "1" }
+        }),
+        None,
+    );
+    let mut form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    form.hermes_user_agent.set("codex_cli_rs/0.0.0");
+
+    let settings = &form.to_provider_json_value()["settingsConfig"];
+
+    assert_eq!(settings["headers"]["User-Agent"], "codex_cli_rs/0.0.0");
+    assert_eq!(settings["headers"]["X-Trace"], "1");
+}
+
+#[test]
+fn provider_edit_form_hermes_clears_only_user_agent_header() {
+    let provider = Provider::with_id(
+        "hermes-provider".to_string(),
+        "Hermes Provider".to_string(),
+        json!({
+            "headers": {
+                "User-Agent": "claude-code/0.1.0",
+                "X-Trace": "1"
+            }
+        }),
+        None,
+    );
+    let mut form = ProviderAddFormState::from_provider(AppType::Hermes, &provider);
+    form.hermes_user_agent.set("");
+
+    let settings = &form.to_provider_json_value()["settingsConfig"];
+
+    assert!(settings["headers"].get("User-Agent").is_none());
     assert_eq!(settings["headers"]["X-Trace"], "1");
 }
 
