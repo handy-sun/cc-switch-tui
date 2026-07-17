@@ -688,6 +688,7 @@ fn gemini_oauth_client_from_options(
     })
 }
 
+#[cfg(target_os = "macos")]
 fn gemini_oauth_client_from_json(value: &serde_json::Value) -> Option<GeminiOAuthClient> {
     let client_id = value
         .get("client_id")
