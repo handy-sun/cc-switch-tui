@@ -207,7 +207,9 @@ fn import_config(file: &PathBuf) -> Result<(), AppError> {
     let backup_id = ConfigService::import_config_from_path(file, &state)?;
 
     // 导入后同步 live 配置
-    if let Err(e) = crate::services::provider::ProviderService::sync_current_to_live(&state) {
+    if let Err(e) =
+        crate::services::provider::ProviderService::sync_current_to_live_after_restore(&state)
+    {
         log::warn!("配置导入后同步 live 配置失败: {e}");
     }
 
@@ -276,7 +278,9 @@ fn restore_config(backup_id: Option<&str>, file_path: Option<&Path>) -> Result<(
         let pre_restore_backup = ConfigService::restore_from_backup_id(id, &state)?;
 
         // 恢复后同步 live 配置
-        if let Err(e) = crate::services::provider::ProviderService::sync_current_to_live(&state) {
+        if let Err(e) =
+            crate::services::provider::ProviderService::sync_current_to_live_after_restore(&state)
+        {
             log::warn!("备份恢复后同步 live 配置失败: {e}");
         }
 
@@ -336,7 +340,9 @@ fn restore_config(backup_id: Option<&str>, file_path: Option<&Path>) -> Result<(
         let pre_restore_backup = ConfigService::import_config_from_path(file, &state)?;
 
         // 恢复后同步 live 配置
-        if let Err(e) = crate::services::provider::ProviderService::sync_current_to_live(&state) {
+        if let Err(e) =
+            crate::services::provider::ProviderService::sync_current_to_live_after_restore(&state)
+        {
             log::warn!("配置恢复后同步 live 配置失败: {e}");
         }
 
@@ -410,7 +416,9 @@ fn restore_config(backup_id: Option<&str>, file_path: Option<&Path>) -> Result<(
     let pre_restore_backup = ConfigService::restore_from_backup_id(&selected_backup.id, &state)?;
 
     // 恢复后同步 live 配置
-    if let Err(e) = crate::services::provider::ProviderService::sync_current_to_live(&state) {
+    if let Err(e) =
+        crate::services::provider::ProviderService::sync_current_to_live_after_restore(&state)
+    {
         log::warn!("备份恢复后同步 live 配置失败: {e}");
     }
 

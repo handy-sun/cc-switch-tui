@@ -287,7 +287,7 @@ fn sync_live_config_after_webdav() {
         return;
     };
 
-    if let Err(err) = crate::services::ProviderService::sync_current_to_live(&state) {
+    if let Err(err) = crate::services::ProviderService::sync_current_to_live_after_restore(&state) {
         let en = format!("Live config sync after WebDAV operation failed: {err}");
         let zh = format!("WebDAV 操作后同步 live 配置失败: {err}");
         println!("{}", warning(crate::t!(&en, &zh)));

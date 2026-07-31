@@ -274,38 +274,36 @@ pub(crate) fn handle_webdav_msg(
                         };
                         app.push_toast(msg, ToastKind::Success);
                     }
-                    WebDavDone::Downloaded { decision, message } => {
-                        match decision {
-                            SyncDecision::V1MigrationNeeded => {
-                                app.overlay = Overlay::Confirm(ConfirmOverlay {
-                                    title: texts::tui_webdav_v1_migration_title().to_string(),
-                                    message: texts::tui_webdav_v1_migration_message().to_string(),
-                                    action: ConfirmAction::WebDavMigrateV1ToV2,
-                                });
-                            }
-                            _ => {
-                                let msg = match decision {
-                                    SyncDecision::Download => {
-                                        texts::tui_toast_webdav_download_ok().to_string()
-                                    }
-                                    _ => message,
-                                };
-                                if let Ok(state) = load_state() {
-                                    if let Err(e) = crate::services::provider::ProviderService::sync_current_to_live(
+                    WebDavDone::Downloaded { decision, message } => match decision {
+                        SyncDecision::V1MigrationNeeded => {
+                            app.overlay = Overlay::Confirm(ConfirmOverlay {
+                                title: texts::tui_webdav_v1_migration_title().to_string(),
+                                message: texts::tui_webdav_v1_migration_message().to_string(),
+                                action: ConfirmAction::WebDavMigrateV1ToV2,
+                            });
+                        }
+                        _ => {
+                            let msg = match decision {
+                                SyncDecision::Download => {
+                                    texts::tui_toast_webdav_download_ok().to_string()
+                                }
+                                _ => message,
+                            };
+                            if let Ok(state) = load_state() {
+                                if let Err(e) = crate::services::provider::ProviderService::sync_current_to_live_after_restore(
                                     &state,
                                 ) {
                                     log::warn!("WebDAV 下载后同步 live 配置失败: {e}");
                                 }
-                                }
-                                app.push_toast(msg, ToastKind::Success);
                             }
+                            app.push_toast(msg, ToastKind::Success);
                         }
-                    }
+                    },
                     WebDavDone::V1Migrated { message } => {
                         let _ = message;
                         if let Ok(state) = load_state() {
                             if let Err(e) =
-                                crate::services::provider::ProviderService::sync_current_to_live(
+                                crate::services::provider::ProviderService::sync_current_to_live_after_restore(
                                     &state,
                                 )
                             {

@@ -864,7 +864,14 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
     use toml_edit::{Item, Table};
 
     // 1) 收集启用项（Codex 维度）
-    let enabled = collect_enabled_servers(&config.mcp.codex);
+    let enabled = match &config.mcp.servers {
+        Some(servers) if !servers.is_empty() || config.mcp.codex.is_empty() => servers
+            .iter()
+            .filter(|(_, server)| server.apps.codex)
+            .map(|(id, server)| (id.clone(), server.server.clone()))
+            .collect(),
+        _ => collect_enabled_servers(&config.mcp.codex),
+    };
 
     // 2) 读取现有 config.toml 文本；保持无效 TOML 的错误返回（不覆盖文件）
     let base_text = crate::codex_config::read_and_validate_codex_config_text()?;

@@ -497,6 +497,53 @@ fn provider_service_sync_current_to_live_preserves_codex_live_mcp_drift() {
 }
 
 #[test]
+fn provider_service_restore_sync_overwrites_codex_live_mcp_from_db() {
+    let _guard = lock_test_mutex();
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    seed_codex_live_changed_mcp(home);
+    std::fs::write(
+        cc_switch_lib::get_codex_config_path(),
+        r#"[mcp_servers.changed]
+type = "stdio"
+command = "live-command"
+
+[mcp_servers.live-only]
+type = "stdio"
+command = "live-only-command"
+"#,
+    )
+    .expect("seed changed and live-only Codex MCP servers");
+    insert_codex_db_changed_mcp(&mut config);
+    let state = state_from_config(config);
+
+    ProviderService::sync_current_to_live_after_restore(&state)
+        .expect("restore sync should update Codex MCP");
+
+    let config_text =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let live: toml::Value = toml::from_str(&config_text).expect("parse live config.toml");
+    let command = live
+        .get("mcp_servers")
+        .and_then(|servers| servers.get("changed"))
+        .and_then(|server| server.get("command"))
+        .and_then(|value| value.as_str());
+    assert_eq!(
+        command,
+        Some("db-command"),
+        "restore sync should replace Codex live MCP with the restored database"
+    );
+    assert!(
+        live.get("mcp_servers")
+            .and_then(|servers| servers.get("live-only"))
+            .is_none(),
+        "restore sync should remove Codex MCP servers absent from the restored database"
+    );
+}
+
+#[test]
 fn provider_service_switch_non_codex_provider_preserves_codex_live_mcp_drift() {
     let _guard = lock_test_mutex();
     reset_test_fs();

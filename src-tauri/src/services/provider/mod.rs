@@ -2201,6 +2201,17 @@ impl ProviderService {
         Ok(())
     }
 
+    /// 将恢复后的数据库快照同步到 live 配置。
+    ///
+    /// 普通 provider 操作会保留 Codex live MCP 漂移；WebDAV/备份恢复则是
+    /// 用户明确选择的覆盖操作，因此恢复完成后需要把所有已启用 MCP（包括 Codex）
+    /// 重新写入 live 配置。
+    pub fn sync_current_to_live_after_restore(state: &AppState) -> Result<(), AppError> {
+        Self::sync_current_to_live(state)?;
+        let config = state.config.read().map_err(AppError::from)?;
+        crate::mcp::sync_enabled_to_codex(&config)
+    }
+
     /// 切换指定应用的供应商
     pub fn switch(state: &AppState, app_type: AppType, provider_id: &str) -> Result<(), AppError> {
         if matches!(app_type, AppType::Hermes) {
