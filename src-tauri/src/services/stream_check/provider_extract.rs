@@ -59,6 +59,17 @@ impl StreamCheckService {
     }
 
     pub(crate) fn extract_codex_model(provider: &Provider) -> Option<String> {
+        if let Some(model) = provider
+            .settings_config
+            .get("codex")
+            .and_then(|codex| codex.get("model"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(model.to_string());
+        }
+
         let config_text = provider
             .settings_config
             .get("config")

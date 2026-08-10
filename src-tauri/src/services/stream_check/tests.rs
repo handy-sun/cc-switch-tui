@@ -81,3 +81,27 @@ fn stream_check_provider_test_config_overrides_global_defaults() {
     assert_eq!(merged.gemini_model, "claude-override");
     assert_eq!(merged.test_prompt, "ping");
 }
+
+#[test]
+fn stream_check_uses_model_from_structured_codex_provider_config() {
+    let provider = crate::provider::Provider::with_id(
+        "codex-provider".to_string(),
+        "Codex Provider".to_string(),
+        json!({
+            "auth": {"OPENAI_API_KEY": "test-key"},
+            "codex": {
+                "model": "gpt-5.6-sol",
+                "model_provider": "codex-provider"
+            }
+        }),
+        None,
+    );
+
+    let model = StreamCheckService::resolve_test_model(
+        &crate::app_config::AppType::Codex,
+        &provider,
+        &StreamCheckConfig::default(),
+    );
+
+    assert_eq!(model, "gpt-5.6-sol");
+}
