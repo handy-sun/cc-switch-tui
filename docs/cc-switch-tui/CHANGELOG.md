@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.3] - 2026-08-10
+
+### Added
+
+- Safe Hermes custom-provider rename flow that updates stored and live provider identities, active selections, and model references atomically while rejecting normalized name collisions.
+- Built-in Hermes providers and provider-dictionary entries in the provider list, including editable model display names where supported.
+- Configurable User-Agent values for Hermes custom providers.
+
+### Fixed
+
+- Preserve concurrent provider updates when a transactional Hermes rename rolls back.
+- Serialize Hermes YAML sequences with consistent nested indentation.
+- Keep OpenClaw test backups out of the real user home directory.
+- Restrict Gemini subscription keychain parsing to macOS.
+- Restore Codex MCP state from WebDAV downloads, migrations, imports, and backups into the live Codex configuration.
+- Use the selected Codex provider's structured model for stream health checks instead of falling back to the stale global default.
+
 ## [0.2.2] - 2026-07-10
 
 ### Added
@@ -135,6 +152,7 @@ Initial release of the renamed cc-switch-tui fork.
 
 - Sponsor section from README files and partner assets
 
+[0.2.3]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.2.3
 [0.2.2]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.2.2
 [0.2.1]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.2.1
 [0.1.4]: https://github.com/handy-sun/cc-switch-tui/releases/tag/v0.1.4
