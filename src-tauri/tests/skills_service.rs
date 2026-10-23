@@ -922,3 +922,120 @@ fn pending_migration_with_existing_managed_list_does_not_claim_unmanaged_skills(
         "unmanaged skill should remain unmanaged (not added to db)"
     );
 }
+
+
+// ---------------------------------------------------------------------------
+// external mode (skills.mode = external)
+// ---------------------------------------------------------------------------
+
+/// Sets the skills mode for the duration of a test and restores managed afterwards.
+struct SkillsModeGuard;
+
+impl SkillsModeGuard {
+    fn external() -> Self {
+        cc_switch_lib::set_skills_mode(cc_switch_lib::SkillsMode::External)
+            .expect("set external skills mode");
+        Self
+    }
+}
+
+impl Drop for SkillsModeGuard {
+    fn drop(&mut self) {
+        let _ = cc_switch_lib::set_skills_mode(cc_switch_lib::SkillsMode::Managed);
+    }
+}
+
+#[test]
+fn external_mode_blocks_write_operations() {
+    let _guard = lock_test_mutex();
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let _mode = SkillsModeGuard::external();
+
+    let toggle_err = SkillService::toggle_app("any-skill", &AppType::Claude, true)
+        .expect_err("toggle must be blocked in external mode");
+    assert!(
+        toggle_err.to_string().contains("agent-skills-nix"),
+        "error should explain external ownership: {toggle_err}"
+    );
+    assert!(SkillService::uninstall("any-skill").is_err());
+    assert!(SkillService::sync_all_enabled(None).is_err());
+    assert!(SkillService::import_from_apps(vec!["x".to_string()]).is_err());
+    assert!(SkillService::import_from_agent(vec!["x".to_string()]).is_err());
+    let method = SkillService::get_sync_method().expect("read sync method");
+    assert!(SkillService::sync_to_app_dir("any-skill", &AppType::Claude, method).is_err());
+    assert!(SkillService::remove_from_app("any-skill", &AppType::Claude).is_err());
+}
+
+#[test]
+fn external_mode_best_effort_sync_is_silent() {
+    let _guard = lock_test_mutex();
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let _mode = SkillsModeGuard::external();
+
+    // Provider switching relies on this being infallible in external mode.
+    SkillService::sync_all_enabled_best_effort().expect("best-effort sync must not fail");
+}
+
+#[test]
+fn external_mode_skips_ssot_migration_and_claiming() {
+    let _guard = lock_test_mutex();
+    reset_test_fs();
+    let home = ensure_test_home();
+    let _mode = SkillsModeGuard::external();
+
+    let claude_skill_dir = home.join(".claude").join("skills").join("nix-skill");
+    write_skill_md(&claude_skill_dir, "Nix Skill", "Managed by agent-skills-nix");
+
+    let db = Database::init().expect("init db");
+    db.set_setting("skills_ssot_migration_pending", "true")
+        .expect("set migration pending flag");
+
+    let installed = SkillService::list_installed().expect("list installed");
+    assert!(
+        installed.is_empty(),
+        "external mode must not claim live skills into the database"
+    );
+
+    let ssot_skill_dir = SkillService::get_ssot_dir()
+        .expect("get ssot dir")
+        .join("nix-skill");
+    assert!(
+        !ssot_skill_dir.exists(),
+        "external mode must not create SSOT copies"
+    );
+
+    let db = Database::init().expect("init db");
+    let pending = db
+        .get_setting("skills_ssot_migration_pending")
+        .expect("read migration pending flag");
+    assert_eq!(
+        pending.as_deref(),
+        Some("true"),
+        "pending flag must survive external mode so managed mode can still migrate later"
+    );
+}
+
+#[test]
+fn external_mode_leaves_foreign_app_dir_untouched() {
+    let _guard = lock_test_mutex();
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    // Create a skill directory that cc-switch-tui never wrote (no symlink, no marker).
+    let claude_skill_dir = home.join(".claude").join("skills").join("nix-skill");
+    write_skill_md(&claude_skill_dir, "Nix Skill", "Nix managed");
+    let before = std::fs::read_to_string(claude_skill_dir.join("SKILL.md")).expect("read skill");
+
+    let _mode = SkillsModeGuard::external();
+    let _ = SkillService::remove_from_app("nix-skill", &AppType::Claude);
+
+    assert!(
+        claude_skill_dir.join("SKILL.md").is_file(),
+        "external mode must never delete directories it did not create"
+    );
+    let after = std::fs::read_to_string(claude_skill_dir.join("SKILL.md")).expect("read skill");
+    assert_eq!(before, after, "skill content must stay identical");
+}
+

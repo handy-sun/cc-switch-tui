@@ -65,10 +65,12 @@ pub use services::{
     QuotaTier, SkillService, SpeedtestService, StreamCheckConfig, StreamCheckResult,
     StreamCheckService, SubscriptionQuota, SyncDecision, WebDavSyncService, WebDavSyncSummary,
 };
+pub use services::skill::{SkillsWriteOp, SyncMethod};
 pub use settings::{
-    get_enable_claude_plugin_integration, get_skip_claude_onboarding, get_webdav_sync_settings,
-    set_enable_claude_plugin_integration, set_skip_claude_onboarding, set_webdav_sync_settings,
-    update_settings, update_webdav_sync_status, webdav_jianguoyun_preset, AppSettings,
+    get_enable_claude_plugin_integration, get_skills_mode, get_skip_claude_onboarding,
+    get_webdav_sync_settings, set_enable_claude_plugin_integration, set_skills_mode,
+    set_skip_claude_onboarding, set_webdav_sync_settings, update_settings,
+    update_webdav_sync_status, webdav_jianguoyun_preset, AppSettings, SkillsMode, SkillsSettings,
     WebDavSyncSettings, WebDavSyncStatus,
 };
 pub use store::AppState;

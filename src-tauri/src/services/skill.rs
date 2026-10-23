@@ -554,11 +554,92 @@ fn should_offer_agent_skill_dir(path: &Path, dir_name: &str, bundled: &HashSet<S
 // SkillService
 // ============================================================================
 
+/// Skills 写操作种类。
+///
+/// 用于 external 模式下给错误提示带上具体动作，同时给日志和测试提供稳定的标识。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillsWriteOp {
+    Install,
+    Uninstall,
+    Enable,
+    Disable,
+    Sync,
+    ImportFromApps,
+    ImportFromAgent,
+    /// SSOT 迁移与 live 目录反写认领。
+    Migration,
+}
+
+impl SkillsWriteOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SkillsWriteOp::Install => "install",
+            SkillsWriteOp::Uninstall => "uninstall",
+            SkillsWriteOp::Enable => "enable",
+            SkillsWriteOp::Disable => "disable",
+            SkillsWriteOp::Sync => "sync",
+            SkillsWriteOp::ImportFromApps => "import-from-apps",
+            SkillsWriteOp::ImportFromAgent => "import-from-agent",
+            SkillsWriteOp::Migration => "migration",
+        }
+    }
+}
+
 pub struct SkillService {
     http_client: Client,
 }
 
+/// external 模式下 Skills 写操作被拦截时的统一文案。
+pub fn external_mode_message() -> String {
+    "Skills 当前由 agent-skills-nix 管理，请在 expnix/skills-nix 中修改。".to_string()
+}
+
+fn external_mode_error(op: SkillsWriteOp) -> AppError {
+    let zh = format!("{}（操作: {}）", external_mode_message(), op.as_str());
+    let en = format!(
+        "Skills are managed externally by agent-skills-nix; edit them in expnix/skills-nix instead. (operation: {})",
+        op.as_str()
+    );
+    AppError::localized("skills.external_managed", zh, en)
+}
+
 impl SkillService {
+    // ---------------------------------------------------------------------
+    // External mode boundary
+    // ---------------------------------------------------------------------
+
+    /// 当前 Skills 管理模式（每次调用都读设置，保证 TUI 内切换立即生效）。
+    pub fn skills_mode() -> crate::settings::SkillsMode {
+        crate::settings::get_skills_mode()
+    }
+
+    pub fn is_external_mode() -> bool {
+        Self::skills_mode().is_external()
+    }
+
+    /// 用户主动触发的写操作闸门：external 模式下返回明确错误。
+    pub fn ensure_managed(op: SkillsWriteOp) -> Result<(), AppError> {
+        if Self::is_external_mode() {
+            return Err(external_mode_error(op));
+        }
+        Ok(())
+    }
+
+    /// 自动/背景写路径（provider 切换、restore 后 live sync）的静默跳过判断。
+    ///
+    /// 返回 `true` 表示当前处于 external 模式，调用方应直接返回成功，
+    /// 不应让 Skills 影响 provider 或恢复流程。
+    pub fn skip_when_external(op: SkillsWriteOp) -> bool {
+        if Self::is_external_mode() {
+            log::debug!(
+                "[skills] external mode: skipping {} (agent-skills-nix owns the target dirs)",
+                op.as_str()
+            );
+            return true;
+        }
+        false
+    }
+
     fn app_supports_skills(app: &AppType) -> bool {
         matches!(
             app,
@@ -667,6 +748,10 @@ impl SkillService {
     fn reconcile_managed_app_enablement_from_live_dirs(
         index: &mut SkillsIndex,
     ) -> Result<bool, AppError> {
+        // external 模式：live 目录由外部工具写入，不能被认领进本工具的数据库。
+        if Self::is_external_mode() {
+            return Ok(false);
+        }
         let mut changed = false;
 
         for app in Self::supported_skill_apps() {
@@ -704,6 +789,12 @@ impl SkillService {
 
     pub fn migrate_ssot_if_pending(index: &mut SkillsIndex) -> Result<usize, AppError> {
         if !index.ssot_migration_pending {
+            return Ok(0);
+        }
+        // external 模式不做 SSOT 迁移，也不清除 pending 标记：
+        // 切回 managed 后仍然可以补做迁移。
+        if Self::is_external_mode() {
+            log::debug!("[skills] external mode: skipping SSOT migration");
             return Ok(0);
         }
 
@@ -916,6 +1007,23 @@ impl SkillService {
         path.join(MANAGED_SKILL_MARKER).is_file()
     }
 
+    /// 判断 app 目录中的目标是否由 cc-switch-tui 自己写入（symlink 指向 SSOT 或带托管标记）。
+    ///
+    /// 纵深防御：external 模式下即使有写路径漏了闸门，也绝不能删除/覆盖
+    /// 非本工具创建的内容（例如 agent-skills-nix 同步出来的目录）。
+    fn is_cc_switch_owned(dest: &Path) -> bool {
+        if Self::is_symlink(dest) {
+            let Ok(ssot_dir) = Self::get_ssot_dir() else {
+                return false;
+            };
+            return match fs::read_link(dest) {
+                Ok(target) => target.starts_with(&ssot_dir),
+                Err(_) => false,
+            };
+        }
+        Self::is_managed_copy(dest)
+    }
+
     fn write_managed_copy_marker(path: &Path) -> Result<(), AppError> {
         let marker = path.join(MANAGED_SKILL_MARKER);
         fs::write(&marker, "managed by cc-switch-tui\n").map_err(|e| AppError::io(&marker, e))
@@ -941,6 +1049,7 @@ impl SkillService {
         if !Self::app_supports_skills(app) {
             return Ok(());
         }
+        Self::ensure_managed(SkillsWriteOp::Sync)?;
 
         let ssot_dir = Self::get_ssot_dir()?;
         let source = ssot_dir.join(directory);
@@ -963,6 +1072,7 @@ impl SkillService {
                 );
                 return Ok(());
             }
+            Self::ensure_replace_allowed(&dest)?;
             Self::remove_path(&dest)?;
         }
 
@@ -987,6 +1097,7 @@ impl SkillService {
         if !Self::app_supports_skills(app) {
             return Ok(());
         }
+        Self::ensure_managed(SkillsWriteOp::Disable)?;
 
         let app_dir = Self::get_app_skills_dir(app)?;
         let path = app_dir.join(directory);
@@ -998,7 +1109,20 @@ impl SkillService {
                 );
                 return Ok(());
             }
+            Self::ensure_replace_allowed(&path)?;
             Self::remove_path(&path)?;
+        }
+        Ok(())
+    }
+
+    /// 覆盖/删除目标目录前的纵深防御：external 模式下只允许动自己写入的内容。
+    fn ensure_replace_allowed(dest: &Path) -> Result<(), AppError> {
+        if Self::is_external_mode() && !Self::is_cc_switch_owned(dest) {
+            log::warn!(
+                "[skills] external mode: refusing to replace non-owned path {}",
+                dest.display()
+            );
+            return Err(external_mode_error(SkillsWriteOp::Sync));
         }
         Ok(())
     }
@@ -1017,7 +1141,12 @@ impl SkillService {
     }
 
     /// Best-effort sync for live-flow triggers (provider switch etc).
+    ///
+    /// external 模式下静默跳过：provider 切换不应因为 Skills 由外部管理而失败。
     pub fn sync_all_enabled_best_effort() -> Result<(), AppError> {
+        if Self::skip_when_external(SkillsWriteOp::Sync) {
+            return Ok(());
+        }
         let mut index = Self::load_index()?;
         let _ = Self::migrate_ssot_if_pending(&mut index);
         for app in Self::supported_skill_apps() {
@@ -1029,6 +1158,7 @@ impl SkillService {
     }
 
     pub fn sync_all_enabled(app: Option<&AppType>) -> Result<(), AppError> {
+        Self::ensure_managed(SkillsWriteOp::Sync)?;
         let mut index = Self::load_index()?;
         let _ = Self::migrate_ssot_if_pending(&mut index)?;
 
@@ -1047,7 +1177,10 @@ impl SkillService {
     pub fn list_installed() -> Result<Vec<InstalledSkill>, AppError> {
         let mut index = Self::load_index()?;
         let _ = Self::migrate_ssot_if_pending(&mut index)?;
-        let _ = Self::reconcile_managed_app_enablement_from_live_dirs(&mut index)?;
+        // external 模式只读：不解析 live 目录，避免把 Nix 管理的技能认领进数据库。
+        if !Self::is_external_mode() {
+            let _ = Self::reconcile_managed_app_enablement_from_live_dirs(&mut index)?;
+        }
         let mut skills: Vec<InstalledSkill> = index.skills.values().cloned().collect();
         skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         Ok(skills)
@@ -1119,6 +1252,11 @@ impl SkillService {
     }
 
     pub fn toggle_app(directory_or_id: &str, app: &AppType, enabled: bool) -> Result<(), AppError> {
+        Self::ensure_managed(if enabled {
+            SkillsWriteOp::Enable
+        } else {
+            SkillsWriteOp::Disable
+        })?;
         let mut index = Self::load_index()?;
         let Some(dir) = Self::resolve_directory_from_input(&index, directory_or_id) else {
             return Err(AppError::Message(format!(
@@ -1147,6 +1285,7 @@ impl SkillService {
     }
 
     pub fn uninstall(directory_or_id: &str) -> Result<(), AppError> {
+        Self::ensure_managed(SkillsWriteOp::Uninstall)?;
         let index = Self::load_index()?;
         let Some(dir) = Self::resolve_directory_from_input(&index, directory_or_id) else {
             return Err(AppError::Message(format!(
@@ -1183,6 +1322,7 @@ impl SkillService {
         if spec.is_empty() {
             return Err(AppError::InvalidInput("Skill 不能为空".to_string()));
         }
+        Self::ensure_managed(SkillsWriteOp::Install)?;
 
         let mut index = Self::load_index()?;
         let _ = Self::migrate_ssot_if_pending(&mut index)?;
@@ -1466,6 +1606,7 @@ impl SkillService {
     }
 
     pub fn import_from_apps(directories: Vec<String>) -> Result<Vec<InstalledSkill>, AppError> {
+        Self::ensure_managed(SkillsWriteOp::ImportFromApps)?;
         let mut index = Self::load_index()?;
         let ssot_dir = Self::get_ssot_dir()?;
         let agents_lock = parse_agents_lock();
@@ -1537,6 +1678,7 @@ impl SkillService {
     }
 
     pub fn import_from_agent(directories: Vec<String>) -> Result<Vec<InstalledSkill>, AppError> {
+        Self::ensure_managed(SkillsWriteOp::ImportFromAgent)?;
         let mut index = Self::load_index()?;
         let ssot_dir = Self::get_ssot_dir()?;
         let agents_lock = parse_agents_lock();

@@ -294,6 +294,45 @@ fn sanitize_path_segment(raw: &str) -> String {
         .join("/")
 }
 
+// ---------------------------------------------------------------------------
+// Skills 管理模式
+// ---------------------------------------------------------------------------
+
+/// Skills 管理模式。
+///
+/// - [`SkillsMode::Managed`]：由 cc-switch-tui 维护 SSOT 并写入各 agent 的 skills 目录。
+/// - [`SkillsMode::External`]：Skills 由外部工具（agent-skills-nix）声明和写入；
+///   cc-switch-tui 只读取自身数据库，不再写入任何 agent 目录，也不打包或恢复
+///   WebDAV 的 `skills.zip`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillsMode {
+    #[default]
+    Managed,
+    External,
+}
+
+impl SkillsMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SkillsMode::Managed => "managed",
+            SkillsMode::External => "external",
+        }
+    }
+
+    pub fn is_external(self) -> bool {
+        matches!(self, SkillsMode::External)
+    }
+}
+
+/// `settings.skills` 段。字段保持可扩展，避免以后为外部目标目录再迁移一次。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsSettings {
+    #[serde(default)]
+    pub mode: SkillsMode,
+}
+
 /// 应用设置结构，允许覆盖默认配置目录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -342,6 +381,9 @@ pub struct AppSettings {
     /// Skills 同步方式（auto|symlink|copy）
     #[serde(default)]
     pub skill_sync_method: crate::services::skill::SyncMethod,
+    /// Skills 管理模式（managed|external）
+    #[serde(default)]
+    pub skills: SkillsSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub security: Option<SecuritySettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -390,6 +432,7 @@ impl Default for AppSettings {
             language: None,
             launch_on_startup: false,
             skill_sync_method: crate::services::skill::SyncMethod::default(),
+            skills: SkillsSettings::default(),
             security: None,
             webdav_sync: None,
             backup_retain_count: None,
@@ -714,6 +757,23 @@ pub fn effective_backup_retain_count() -> usize {
 pub fn set_skill_sync_method(method: crate::services::skill::SyncMethod) -> Result<(), AppError> {
     let mut settings = get_settings();
     settings.skill_sync_method = method;
+    update_settings(settings)
+}
+
+pub fn get_skills_settings() -> SkillsSettings {
+    settings_store()
+        .read()
+        .map(|settings| settings.skills)
+        .unwrap_or_default()
+}
+
+pub fn get_skills_mode() -> SkillsMode {
+    get_skills_settings().mode
+}
+
+pub fn set_skills_mode(mode: SkillsMode) -> Result<(), AppError> {
+    let mut settings = get_settings();
+    settings.skills.mode = mode;
     update_settings(settings)
 }
 
