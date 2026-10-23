@@ -7,6 +7,8 @@ use crate::error::AppError;
 use crate::services::skill::{SkillRepo, SyncMethod};
 use crate::services::SkillService;
 
+use crate::settings::SkillsMode;
+
 #[derive(Subcommand)]
 pub enum SkillsCommand {
     /// List installed skills (from SSOT + database state)
@@ -57,6 +59,12 @@ pub enum SkillsCommand {
         #[arg(value_enum)]
         method: Option<SyncMethod>,
     },
+    /// Get or set the skills management mode (managed|external)
+    Mode {
+        /// Optional mode to set (omit to show current)
+        #[arg(value_enum)]
+        mode: Option<SkillsMode>,
+    },
     /// Manage skill repositories
     #[command(subcommand)]
     Repos(SkillReposCommand),
@@ -103,6 +111,7 @@ pub fn execute(cmd: SkillsCommand, app: Option<AppType>) -> Result<(), AppError>
         SkillsCommand::ImportFromApps { directories } => import_from_apps(directories),
         SkillsCommand::Info { spec } => show_skill_info(&spec),
         SkillsCommand::SyncMethod { method } => sync_method(method),
+        SkillsCommand::Mode { mode } => mode_command(mode),
         SkillsCommand::Repos(repos_cmd) => execute_repos(repos_cmd),
     }
 }
@@ -217,6 +226,12 @@ fn sync_skills(app: Option<&AppType>) -> Result<(), AppError> {
 }
 
 fn scan_unmanaged() -> Result<(), AppError> {
+    // external 模式下扫描结果只会被用于导入，而导入已禁用，因此直接给出提示。
+    if SkillService::is_external_mode() {
+        return Err(AppError::Message(
+            crate::services::skill::external_mode_message(),
+        ));
+    }
     let skills = SkillService::scan_unmanaged()?;
     if skills.is_empty() {
         println!("{}", info("No unmanaged skills found."));
@@ -360,6 +375,30 @@ fn sync_method(method: Option<SyncMethod>) -> Result<(), AppError> {
             let method = SkillService::get_sync_method()?;
             println!("{}", highlight("Skill Sync Method"));
             println!("{method:?}");
+        }
+    }
+    Ok(())
+}
+
+fn mode_command(mode: Option<SkillsMode>) -> Result<(), AppError> {
+    match mode {
+        Some(mode) => {
+            crate::settings::set_skills_mode(mode)?;
+            println!(
+                "{}",
+                success(&format!("✓ Skill management mode set to {}", mode.as_str()))
+            );
+            if mode.is_external() {
+                println!("{}", info(&crate::services::skill::external_mode_message()));
+            }
+        }
+        None => {
+            let mode = crate::settings::get_skills_mode();
+            println!("{}", highlight("Skill Management Mode"));
+            println!("{}", mode.as_str());
+            if mode.is_external() {
+                println!("{}", info(&crate::services::skill::external_mode_message()));
+            }
         }
     }
     Ok(())

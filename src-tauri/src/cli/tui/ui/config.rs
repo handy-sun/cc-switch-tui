@@ -2365,6 +2365,10 @@ pub(super) fn render_settings(
                 texts::tui_settings_skill_sync_method_label().to_string(),
                 texts::tui_skills_sync_method_name(skill_sync_method).to_string(),
             ),
+            super::app::SettingsItem::SkillsMode => (
+                texts::tui_settings_skills_mode_label().to_string(),
+                texts::tui_skills_mode_name(crate::settings::get_skills_mode()).to_string(),
+            ),
             super::app::SettingsItem::SkipClaudeOnboarding => (
                 texts::skip_claude_onboarding_label().to_string(),
                 if skip_claude_onboarding {

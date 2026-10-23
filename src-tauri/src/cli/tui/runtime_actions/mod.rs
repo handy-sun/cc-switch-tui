@@ -337,6 +337,13 @@ pub(crate) fn handle_action(
             );
             Ok(())
         }
+        Action::SetSkillsMode(mode) => {
+            crate::settings::set_skills_mode(mode)?;
+            *ctx.data = super::data::UiData::load(&ctx.app.app_type)?;
+            ctx.app
+                .push_toast(texts::tui_toast_skills_mode_set(mode), ToastKind::Success);
+            Ok(())
+        }
         Action::SetManagedProxyForCurrentApp { app_type, enabled } => queue_managed_proxy_action(
             ctx.app,
             ctx.proxy_req_tx,

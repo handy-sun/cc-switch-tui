@@ -68,6 +68,7 @@ pub enum ConfirmAction {
     ConfigReset,
     SettingsSetSkipClaudeOnboarding { enabled: bool },
     SettingsSetClaudePluginIntegration { enabled: bool },
+    SettingsSetSkillsMode { mode: crate::settings::SkillsMode },
     ProviderApiFormatProxyNotice,
     OpenClawDailyMemoryDelete { filename: String },
     FormSaveBeforeClose,
