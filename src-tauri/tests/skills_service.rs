@@ -923,7 +923,6 @@ fn pending_migration_with_existing_managed_list_does_not_claim_unmanaged_skills(
     );
 }
 
-
 // ---------------------------------------------------------------------------
 // external mode (skills.mode = external)
 // ---------------------------------------------------------------------------
@@ -986,7 +985,11 @@ fn external_mode_skips_ssot_migration_and_claiming() {
     let _mode = SkillsModeGuard::external();
 
     let claude_skill_dir = home.join(".claude").join("skills").join("nix-skill");
-    write_skill_md(&claude_skill_dir, "Nix Skill", "Managed by agent-skills-nix");
+    write_skill_md(
+        &claude_skill_dir,
+        "Nix Skill",
+        "Managed by agent-skills-nix",
+    );
 
     let db = Database::init().expect("init db");
     db.set_setting("skills_ssot_migration_pending", "true")
@@ -1038,4 +1041,3 @@ fn external_mode_leaves_foreign_app_dir_untouched() {
     let after = std::fs::read_to_string(claude_skill_dir.join("SKILL.md")).expect("read skill");
     assert_eq!(before, after, "skill content must stay identical");
 }
-

@@ -8454,7 +8454,6 @@ custom_providers:
     }
 
     #[test]
-    #[test]
     fn settings_menu_exposes_skills_mode_item() {
         assert!(
             SettingsItem::ALL

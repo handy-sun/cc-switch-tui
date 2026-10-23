@@ -1,6 +1,6 @@
 use super::*;
 
-fn pane_title(app: &App) -> String {
+fn pane_title() -> String {
     if crate::services::SkillService::is_external_mode() {
         format!(
             "{}（{}）",
@@ -42,7 +42,7 @@ pub(super) fn render_skills_installed(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(pane_title(app));
+        .title(pane_title());
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 

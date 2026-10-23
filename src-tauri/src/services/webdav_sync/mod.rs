@@ -243,11 +243,7 @@ async fn download() -> Result<WebDavSyncSummary, AppError> {
         let skills_zip = if crate::services::SkillService::is_external_mode() {
             log::debug!("[WebDAV] external skills mode: not restoring skills.zip");
             None
-        } else if snapshot
-            .manifest
-            .artifacts
-            .contains_key(REMOTE_SKILLS_ZIP)
-        {
+        } else if snapshot.manifest.artifacts.contains_key(REMOTE_SKILLS_ZIP) {
             Some(
                 download_and_verify(
                     &settings,
@@ -651,7 +647,9 @@ fn apply_snapshot(db_sql: &[u8], skills_zip: Option<&[u8]>) -> Result<(), AppErr
     // 此时既不备份也不恢复 SSOT，只导入数据库。
     let Some(skills_zip) = skills_zip else {
         log::debug!("[WebDAV] restore without skills.zip; database only");
-        return Database::init()?.import_sql_string_for_sync(sql_str);
+        return Database::init()?
+            .import_sql_string_for_sync(sql_str)
+            .map(|_| ());
     };
 
     let skills_backup = SkillsBackup::backup_current_skills()?;

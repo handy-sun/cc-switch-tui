@@ -16,10 +16,8 @@ fn blocked_by_external_mode(ctx: &mut RuntimeActionContext<'_>, error: &AppError
     if !crate::services::SkillService::is_external_mode() {
         return false;
     }
-    ctx.app.push_toast(
-        texts::tui_toast_skills_write_blocked(),
-        ToastKind::Warning,
-    );
+    ctx.app
+        .push_toast(texts::tui_toast_skills_write_blocked(), ToastKind::Warning);
     log::debug!("[skills] write blocked in external mode: {error}");
     true
 }
@@ -303,9 +301,9 @@ pub(super) fn import_from_apps(
     ctx: &mut RuntimeActionContext<'_>,
     directories: Vec<String>,
 ) -> Result<(), AppError> {
-    if let Err(error) = SkillService::ensure_managed(
-        crate::services::skill::SkillsWriteOp::ImportFromApps,
-    ) {
+    if let Err(error) =
+        SkillService::ensure_managed(crate::services::skill::SkillsWriteOp::ImportFromApps)
+    {
         if blocked_by_external_mode(ctx, &error) {
             return Ok(());
         }
@@ -332,9 +330,9 @@ pub(super) fn import_from_agent(
     ctx: &mut RuntimeActionContext<'_>,
     directories: Vec<String>,
 ) -> Result<(), AppError> {
-    if let Err(error) = SkillService::ensure_managed(
-        crate::services::skill::SkillsWriteOp::ImportFromAgent,
-    ) {
+    if let Err(error) =
+        SkillService::ensure_managed(crate::services::skill::SkillsWriteOp::ImportFromAgent)
+    {
         if blocked_by_external_mode(ctx, &error) {
             return Ok(());
         }

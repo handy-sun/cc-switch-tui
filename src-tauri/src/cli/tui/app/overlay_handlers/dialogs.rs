@@ -57,9 +57,7 @@ impl App {
                     ConfirmAction::SettingsSetClaudePluginIntegration { enabled } => {
                         Action::SetClaudePluginIntegration { enabled: *enabled }
                     }
-                    ConfirmAction::SettingsSetSkillsMode { mode } => {
-                        Action::SetSkillsMode(*mode)
-                    }
+                    ConfirmAction::SettingsSetSkillsMode { mode } => Action::SetSkillsMode(*mode),
                     ConfirmAction::ProviderApiFormatProxyNotice => Action::None,
                     ConfirmAction::OpenClawDailyMemoryDelete { filename } => {
                         Action::OpenClawDailyMemoryDelete {
