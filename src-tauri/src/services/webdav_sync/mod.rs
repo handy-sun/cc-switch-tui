@@ -110,7 +110,8 @@ struct ArtifactMeta {
 
 struct LocalSnapshot {
     db_sql: Vec<u8>,
-    skills_zip: Vec<u8>,
+    /// external 模式下为 `None`：Skills 由外部工具管理，不打包也不上传。
+    skills_zip: Option<Vec<u8>>,
     settings_json: Vec<u8>,
     manifest_bytes: Vec<u8>,
     manifest_hash: String,
@@ -180,8 +181,10 @@ async fn upload() -> Result<WebDavSyncSummary, AppError> {
     let db_url = build_artifact_url(&settings, RemoteLayout::Current, REMOTE_DB_SQL)?;
     webdav::put_bytes(&db_url, &auth, snapshot.db_sql, "application/sql").await?;
 
-    let skills_url = build_artifact_url(&settings, RemoteLayout::Current, REMOTE_SKILLS_ZIP)?;
-    webdav::put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip").await?;
+    if let Some(skills_zip) = snapshot.skills_zip {
+        let skills_url = build_artifact_url(&settings, RemoteLayout::Current, REMOTE_SKILLS_ZIP)?;
+        webdav::put_bytes(&skills_url, &auth, skills_zip, "application/zip").await?;
+    }
 
     let settings_url = build_artifact_url(&settings, RemoteLayout::Current, REMOTE_SETTINGS_JSON)?;
     webdav::put_bytes(
@@ -235,14 +238,29 @@ async fn download() -> Result<WebDavSyncSummary, AppError> {
             &snapshot.manifest.artifacts,
         )
         .await?;
-        let skills_zip = download_and_verify(
-            &settings,
-            &auth,
-            snapshot.layout,
-            REMOTE_SKILLS_ZIP,
-            &snapshot.manifest.artifacts,
-        )
-        .await?;
+        // external 模式下 Skills 由外部工具管理：既不下载 skills.zip，
+        // 也不在恢复时触碰 SSOT 或 agent 目录。缺失该 artifact 视为正常。
+        let skills_zip = if crate::services::SkillService::is_external_mode() {
+            log::debug!("[WebDAV] external skills mode: not restoring skills.zip");
+            None
+        } else if snapshot
+            .manifest
+            .artifacts
+            .contains_key(REMOTE_SKILLS_ZIP)
+        {
+            Some(
+                download_and_verify(
+                    &settings,
+                    &auth,
+                    snapshot.layout,
+                    REMOTE_SKILLS_ZIP,
+                    &snapshot.manifest.artifacts,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         let incoming_settings = if snapshot
             .manifest
             .artifacts
@@ -266,7 +284,7 @@ async fn download() -> Result<WebDavSyncSummary, AppError> {
                 .await
                 .map_err(AppError::Message)?;
             ensure_restore_allowed().await?;
-            apply_snapshot(&db_sql, &skills_zip)?;
+            apply_snapshot(&db_sql, skills_zip.as_deref())?;
             if let Some(incoming_settings) = incoming_settings {
                 apply_settings_preserving_webdav(incoming_settings)?;
             }
@@ -357,11 +375,15 @@ fn build_local_snapshot(_settings: &WebDavSyncSettings) -> Result<LocalSnapshot,
     // 导出 DB
     let db_sql = Database::init()?.export_sql_string_for_sync()?.into_bytes();
 
-    // 打包 skills
-    let skills_zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
-    zip_skills_ssot(&skills_zip_path)?;
-    let skills_zip =
-        std::fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
+    // 打包 skills（external 模式下 Skills 由 agent-skills-nix 管理，跳过）
+    let skills_zip = if crate::services::SkillService::is_external_mode() {
+        log::debug!("[WebDAV] external skills mode: skipping skills.zip");
+        None
+    } else {
+        let skills_zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
+        zip_skills_ssot(&skills_zip_path)?;
+        Some(std::fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?)
+    };
 
     let settings_json = serde_json::to_vec_pretty(&get_settings())
         .map_err(|e| AppError::JsonSerialize { source: e })?;
@@ -375,13 +397,17 @@ fn build_local_snapshot(_settings: &WebDavSyncSettings) -> Result<LocalSnapshot,
             size: db_sql.len() as u64,
         },
     );
-    artifacts.insert(
-        REMOTE_SKILLS_ZIP.to_string(),
-        ArtifactMeta {
-            sha256: sha256_hex(&skills_zip),
-            size: skills_zip.len() as u64,
-        },
-    );
+    // external 模式下 manifest 中省略 skills.zip：给该 artifact 配一个空哈希会让
+    // 其他设备下载到空快照，从而误删它们自己的 Skills。
+    if let Some(skills_zip) = skills_zip.as_ref() {
+        artifacts.insert(
+            REMOTE_SKILLS_ZIP.to_string(),
+            ArtifactMeta {
+                sha256: sha256_hex(skills_zip),
+                size: skills_zip.len() as u64,
+            },
+        );
+    }
     artifacts.insert(
         REMOTE_SETTINGS_JSON.to_string(),
         ArtifactMeta {
@@ -612,7 +638,7 @@ fn validate_artifact_size_limit(name: &str, size: u64) -> Result<(), AppError> {
 // 快照应用（带 skills 备份回滚）
 // ---------------------------------------------------------------------------
 
-fn apply_snapshot(db_sql: &[u8], skills_zip: &[u8]) -> Result<(), AppError> {
+fn apply_snapshot(db_sql: &[u8], skills_zip: Option<&[u8]>) -> Result<(), AppError> {
     let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
         localized(
             "webdav.sync.sql_not_utf8",
@@ -620,6 +646,13 @@ fn apply_snapshot(db_sql: &[u8], skills_zip: &[u8]) -> Result<(), AppError> {
             format!("SQL is not valid UTF-8: {e}"),
         )
     })?;
+
+    // `None` 表示 Skills 不由本工具管理（external 模式，或远端 manifest 未包含该 artifact）：
+    // 此时既不备份也不恢复 SSOT，只导入数据库。
+    let Some(skills_zip) = skills_zip else {
+        log::debug!("[WebDAV] restore without skills.zip; database only");
+        return Database::init()?.import_sql_string_for_sync(sql_str);
+    };
 
     let skills_backup = SkillsBackup::backup_current_skills()?;
 
@@ -649,10 +682,21 @@ fn parse_settings_json(raw: &[u8]) -> Result<AppSettings, AppError> {
     })
 }
 
-fn apply_settings_preserving_webdav(mut incoming: AppSettings) -> Result<(), AppError> {
+/// 恢复远端 settings.json 时保留"本机专有"的字段。
+///
+/// - `webdav_sync`：连接凭据不能跨设备覆盖；
+/// - `skills`：Skills 管理模式是"本机决定 Nix target 是否接管目录"的开关，
+///   必须保留本机值，否则从另一台 managed 设备恢复快照会悄悄切回 managed，
+///   造成两个写入者竞争同一批目录。
+fn merge_restored_settings(current: &AppSettings, mut incoming: AppSettings) -> AppSettings {
+    incoming.webdav_sync = current.webdav_sync.clone();
+    incoming.skills = current.skills;
+    incoming
+}
+
+fn apply_settings_preserving_webdav(incoming: AppSettings) -> Result<(), AppError> {
     let current = get_settings();
-    incoming.webdav_sync = current.webdav_sync;
-    update_settings(incoming)
+    update_settings(merge_restored_settings(&current, incoming))
 }
 
 // ---------------------------------------------------------------------------
@@ -984,13 +1028,20 @@ async fn migrate_v1_to_v2() -> Result<WebDavSyncSummary, AppError> {
         &v1_manifest.artifacts.db_sql,
     )
     .await?;
-    let skills_zip = download_v1_artifact(
-        &settings,
-        &auth,
-        REMOTE_SKILLS_ZIP,
-        &v1_manifest.artifacts.skills_zip,
-    )
-    .await?;
+    let skills_zip = if crate::services::SkillService::is_external_mode() {
+        log::debug!("[WebDAV] external skills mode: skipping V1 skills.zip");
+        None
+    } else {
+        Some(
+            download_v1_artifact(
+                &settings,
+                &auth,
+                REMOTE_SKILLS_ZIP,
+                &v1_manifest.artifacts.skills_zip,
+            )
+            .await?,
+        )
+    };
     let settings_sync = download_v1_artifact(
         &settings,
         &auth,
@@ -1005,7 +1056,7 @@ async fn migrate_v1_to_v2() -> Result<WebDavSyncSummary, AppError> {
         .await
         .map_err(AppError::Message)?;
     ensure_restore_allowed().await?;
-    apply_snapshot(&db_sql, &skills_zip)?;
+    apply_snapshot(&db_sql, skills_zip.as_deref())?;
     apply_v1_syncable_settings(syncable_settings)?;
     drop(_guard);
 
@@ -1104,6 +1155,29 @@ mod tests {
         assert!(
             !url.contains("//cc"),
             "url should not contain duplicated slash: {url}"
+        );
+    }
+
+    #[test]
+    fn restored_settings_keep_local_skills_mode() {
+        let mut current = AppSettings::default();
+        current.skills.mode = crate::settings::SkillsMode::External;
+
+        let mut incoming = AppSettings::default();
+        incoming.skills.mode = crate::settings::SkillsMode::Managed;
+        incoming.save_shortcut = Some("F2".to_string());
+
+        let merged = merge_restored_settings(&current, incoming);
+
+        assert_eq!(
+            merged.skills.mode,
+            crate::settings::SkillsMode::External,
+            "restoring a managed snapshot must not flip this machine to managed"
+        );
+        assert_eq!(
+            merged.save_shortcut.as_deref(),
+            Some("F2"),
+            "other restored settings still apply"
         );
     }
 
