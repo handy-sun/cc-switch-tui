@@ -594,6 +594,9 @@ mod tests {
 
     #[test]
     fn prepare_launch_from_settings_writes_exact_effective_snapshot() {
+        if crate::test_support::skip_missing_binary("claude") {
+            return;
+        }
         let temp_dir = TempDir::new().expect("create temp dir");
         let provider = Provider::with_id(
             "demo".to_string(),

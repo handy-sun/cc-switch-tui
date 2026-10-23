@@ -30,6 +30,18 @@ pub(crate) fn test_home_override() -> Option<PathBuf> {
         .or_else(crate::config::auto_test_home)
 }
 
+/// Skips an environment-dependent test when an external CLI is not installed.
+///
+/// Returns `true` and prints the reason so `cargo test` stays green on machines
+/// without the agent binaries (for example a NixOS box with no `claude` shim).
+pub(crate) fn skip_missing_binary(binary: &str) -> bool {
+    if which::which(binary).is_ok() {
+        return false;
+    }
+    eprintln!("skipping test: `{binary}` not found in PATH");
+    true
+}
+
 /// Serialises tests that mutate the global CodexOAuthService manager_store.
 /// `serial_test::#[serial]` is unreliable with `#[tokio::test]` on multi-threaded
 /// runtimes; a dedicated `Mutex` is more predictable.

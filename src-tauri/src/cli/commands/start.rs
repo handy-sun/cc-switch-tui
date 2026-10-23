@@ -397,6 +397,9 @@ mod tests {
 
     #[test]
     fn prepare_claude_launch_with_writes_effective_snapshot_from_state() {
+        if crate::test_support::skip_missing_binary("claude") {
+            return;
+        }
         let temp_dir = TempDir::new().expect("create temp dir");
         let mut config = crate::app_config::MultiAppConfig::default();
         config.ensure_app(&AppType::Claude);

@@ -414,6 +414,9 @@ mod tests {
     #[test]
     #[serial]
     fn launch_uses_effective_snapshot_from_realtime_state() {
+        if crate::test_support::skip_missing_binary("claude") {
+            return;
+        }
         let temp_home = TempDir::new().expect("create temp home");
         let _env = EnvGuard::set_home(temp_home.path());
         std::fs::create_dir_all(crate::config::get_claude_config_dir())
