@@ -1352,7 +1352,8 @@ pub(crate) fn is_save_shortcut(key: KeyEvent) -> bool {
         key_matches_shortcut(key, modifiers, code)
     } else {
         // 解析失败时回退到默认 Ctrl+S
-        matches!(key.code, KeyCode::Char('s' | 'S')) && key.modifiers.contains(KeyModifiers::CONTROL)
+        matches!(key.code, KeyCode::Char('s' | 'S'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
             || key.code == KeyCode::Char('\u{13}')
     }
 }

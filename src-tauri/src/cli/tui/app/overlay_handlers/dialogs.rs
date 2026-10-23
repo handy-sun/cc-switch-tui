@@ -265,9 +265,7 @@ impl App {
             }
             TextSubmit::SettingsSaveShortcut => {
                 let trimmed = raw.trim().to_string();
-                if !trimmed.is_empty()
-                    && super::helpers::parse_shortcut(&trimmed).is_none()
-                {
+                if !trimmed.is_empty() && super::helpers::parse_shortcut(&trimmed).is_none() {
                     self.push_toast(
                         texts::tui_settings_save_shortcut_invalid(),
                         ToastKind::Warning,
@@ -275,7 +273,11 @@ impl App {
                     return Action::None;
                 }
                 Action::SetSaveShortcut {
-                    shortcut: if trimmed.is_empty() { None } else { Some(trimmed) },
+                    shortcut: if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    },
                 }
             }
             TextSubmit::SkillsDiscoverQuery => {

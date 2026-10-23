@@ -362,8 +362,10 @@ pub(crate) fn handle_action(
             let mut settings = crate::settings::get_settings();
             settings.save_shortcut = shortcut;
             crate::settings::update_settings(settings)?;
-            ctx.app
-                .push_toast(texts::tui_settings_save_shortcut_saved(), ToastKind::Success);
+            ctx.app.push_toast(
+                texts::tui_settings_save_shortcut_saved(),
+                ToastKind::Success,
+            );
             Ok(())
         }
         Action::CheckUpdate => updates::check(&mut ctx),
