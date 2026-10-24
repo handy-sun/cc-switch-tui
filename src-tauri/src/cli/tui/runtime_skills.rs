@@ -27,6 +27,12 @@ pub(crate) fn open_skills_import_picker_with<F>(app: &mut App, scan: F) -> Resul
 where
     F: FnOnce() -> Result<Vec<crate::services::skill::UnmanagedSkill>, AppError>,
 {
+    // external 模式下不扫描外部目录：扫描结果只能用于导入，而导入已被禁用。
+    if crate::services::SkillService::is_external_mode() {
+        app.overlay = Overlay::None;
+        app.push_toast(texts::tui_skills_external_hint(), ToastKind::Warning);
+        return Ok(());
+    }
     let skills = scan()?;
     app.skills_unmanaged_results = skills.clone();
     app.skills_unmanaged_selected.clear();
@@ -61,6 +67,11 @@ pub(crate) fn open_agent_skills_import_picker_with<F>(
 where
     F: FnOnce() -> Result<Vec<crate::services::skill::UnmanagedSkill>, AppError>,
 {
+    if crate::services::SkillService::is_external_mode() {
+        app.overlay = Overlay::None;
+        app.push_toast(texts::tui_skills_external_hint(), ToastKind::Warning);
+        return Ok(());
+    }
     let skills = scan()?;
     app.skills_unmanaged_results = skills.clone();
     app.skills_unmanaged_selected.clear();

@@ -11,12 +11,28 @@ use super::super::runtime_skills::{
 };
 use super::RuntimeActionContext;
 
+/// external 模式下写操作被拦截：转成提示 toast，而不是让 TUI 弹出错误。
+fn blocked_by_external_mode(ctx: &mut RuntimeActionContext<'_>, error: &AppError) -> bool {
+    if !crate::services::SkillService::is_external_mode() {
+        return false;
+    }
+    ctx.app
+        .push_toast(texts::tui_toast_skills_write_blocked(), ToastKind::Warning);
+    log::debug!("[skills] write blocked in external mode: {error}");
+    true
+}
+
 pub(super) fn toggle(
     ctx: &mut RuntimeActionContext<'_>,
     directory: String,
     enabled: bool,
 ) -> Result<(), AppError> {
-    SkillService::toggle_app(&directory, &ctx.app.app_type, enabled)?;
+    if let Err(error) = SkillService::toggle_app(&directory, &ctx.app.app_type, enabled) {
+        if blocked_by_external_mode(ctx, &error) {
+            return Ok(());
+        }
+        return Err(error);
+    }
     *ctx.data = super::super::data::UiData::load(&ctx.app.app_type)?;
     ctx.app.push_toast(
         texts::tui_toast_skill_toggled(&directory, enabled),
@@ -31,7 +47,12 @@ pub(super) fn toggle_many(
     enabled: bool,
 ) -> Result<(), AppError> {
     for directory in &directories {
-        SkillService::toggle_app(directory, &ctx.app.app_type, enabled)?;
+        if let Err(error) = SkillService::toggle_app(directory, &ctx.app.app_type, enabled) {
+            if blocked_by_external_mode(ctx, &error) {
+                return Ok(());
+            }
+            return Err(error);
+        }
     }
     *ctx.data = super::super::data::UiData::load(&ctx.app.app_type)?;
     ctx.app.push_toast(
@@ -66,7 +87,12 @@ pub(super) fn set_apps(
             continue;
         }
         changed = true;
-        SkillService::toggle_app(&directory, &app_type, next_enabled)?;
+        if let Err(error) = SkillService::toggle_app(&directory, &app_type, next_enabled) {
+            if blocked_by_external_mode(ctx, &error) {
+                return Ok(());
+            }
+            return Err(error);
+        }
     }
 
     *ctx.data = super::super::data::UiData::load(&ctx.app.app_type)?;
@@ -101,7 +127,12 @@ pub(super) fn set_apps_many(
                 continue;
             }
             changed = true;
-            SkillService::toggle_app(directory, &app_type, next_enabled)?;
+            if let Err(error) = SkillService::toggle_app(directory, &app_type, next_enabled) {
+                if blocked_by_external_mode(ctx, &error) {
+                    return Ok(());
+                }
+                return Err(error);
+            }
         }
     }
 
@@ -114,6 +145,13 @@ pub(super) fn set_apps_many(
 }
 
 pub(super) fn install(ctx: &mut RuntimeActionContext<'_>, spec: String) -> Result<(), AppError> {
+    if let Err(error) = SkillService::ensure_managed(crate::services::skill::SkillsWriteOp::Install)
+    {
+        if blocked_by_external_mode(ctx, &error) {
+            return Ok(());
+        }
+        return Err(error);
+    }
     let Some(tx) = ctx.skills_req_tx else {
         return Err(AppError::Message(
             texts::tui_error_skills_worker_unavailable().to_string(),
@@ -136,7 +174,12 @@ pub(super) fn uninstall(
     ctx: &mut RuntimeActionContext<'_>,
     directory: String,
 ) -> Result<(), AppError> {
-    SkillService::uninstall(&directory)?;
+    if let Err(error) = SkillService::uninstall(&directory) {
+        if blocked_by_external_mode(ctx, &error) {
+            return Ok(());
+        }
+        return Err(error);
+    }
     *ctx.data = super::super::data::UiData::load(&ctx.app.app_type)?;
     ctx.app.push_toast(
         texts::tui_toast_skill_uninstalled(&directory),
@@ -157,7 +200,12 @@ pub(super) fn uninstall_many(
     directories: Vec<String>,
 ) -> Result<(), AppError> {
     for directory in &directories {
-        SkillService::uninstall(directory)?;
+        if let Err(error) = SkillService::uninstall(directory) {
+            if blocked_by_external_mode(ctx, &error) {
+                return Ok(());
+            }
+            return Err(error);
+        }
     }
     *ctx.data = super::super::data::UiData::load(&ctx.app.app_type)?;
     ctx.app.push_toast(
@@ -171,7 +219,12 @@ pub(super) fn sync(
     ctx: &mut RuntimeActionContext<'_>,
     scope: Option<AppType>,
 ) -> Result<(), AppError> {
-    SkillService::sync_all_enabled(scope.as_ref())?;
+    if let Err(error) = SkillService::sync_all_enabled(scope.as_ref()) {
+        if blocked_by_external_mode(ctx, &error) {
+            return Ok(());
+        }
+        return Err(error);
+    }
     *ctx.data = super::super::data::UiData::load(&ctx.app.app_type)?;
     ctx.app
         .push_toast(texts::tui_toast_skills_synced(), ToastKind::Success);
@@ -248,12 +301,25 @@ pub(super) fn import_from_apps(
     ctx: &mut RuntimeActionContext<'_>,
     directories: Vec<String>,
 ) -> Result<(), AppError> {
-    finish_skills_import_with(
+    if let Err(error) =
+        SkillService::ensure_managed(crate::services::skill::SkillsWriteOp::ImportFromApps)
+    {
+        if blocked_by_external_mode(ctx, &error) {
+            return Ok(());
+        }
+        return Err(error);
+    }
+    if let Err(error) = finish_skills_import_with(
         ctx.app,
         ctx.data,
         || SkillService::import_from_apps(directories),
         super::super::data::UiData::load,
-    )?;
+    ) {
+        if blocked_by_external_mode(ctx, &error) {
+            return Ok(());
+        }
+        return Err(error);
+    }
     ctx.app.skills_unmanaged_results = SkillService::scan_unmanaged()?;
     ctx.app.skills_unmanaged_selected.clear();
     ctx.app.skills_unmanaged_idx = 0;
@@ -264,12 +330,25 @@ pub(super) fn import_from_agent(
     ctx: &mut RuntimeActionContext<'_>,
     directories: Vec<String>,
 ) -> Result<(), AppError> {
-    finish_skills_import_with(
+    if let Err(error) =
+        SkillService::ensure_managed(crate::services::skill::SkillsWriteOp::ImportFromAgent)
+    {
+        if blocked_by_external_mode(ctx, &error) {
+            return Ok(());
+        }
+        return Err(error);
+    }
+    if let Err(error) = finish_skills_import_with(
         ctx.app,
         ctx.data,
         || SkillService::import_from_agent(directories),
         super::super::data::UiData::load,
-    )?;
+    ) {
+        if blocked_by_external_mode(ctx, &error) {
+            return Ok(());
+        }
+        return Err(error);
+    }
     ctx.app.skills_unmanaged_results = SkillService::scan_agent_installed()?;
     ctx.app.skills_unmanaged_selected.clear();
     ctx.app.skills_unmanaged_idx = 0;

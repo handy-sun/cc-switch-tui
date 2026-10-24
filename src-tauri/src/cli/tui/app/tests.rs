@@ -8454,6 +8454,63 @@ custom_providers:
     }
 
     #[test]
+    fn settings_menu_exposes_skills_mode_item() {
+        assert!(
+            SettingsItem::ALL
+                .iter()
+                .any(|item| matches!(item, SettingsItem::SkillsMode)),
+            "Settings should expose a skills management mode entry"
+        );
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn settings_skills_mode_item_asks_before_switching() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+        crate::settings::set_skills_mode(crate::settings::SkillsMode::Managed)
+            .expect("seed managed mode");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Settings;
+        app.focus = Focus::Content;
+        app.settings_idx = SettingsItem::ALL
+            .iter()
+            .position(|item| matches!(item, SettingsItem::SkillsMode))
+            .expect("SkillsMode missing from SettingsItem::ALL");
+
+        // Switching to external must go through a confirm overlay.
+        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::Confirm(ConfirmOverlay {
+                action: ConfirmAction::SettingsSetSkillsMode {
+                    mode: crate::settings::SkillsMode::External
+                },
+                ..
+            })
+        ));
+
+        let action = app.on_key(key(KeyCode::Char('y')), &UiData::default());
+        assert!(matches!(
+            action,
+            Action::SetSkillsMode(crate::settings::SkillsMode::External)
+        ));
+
+        // Switching back also asks, because two writers must not overlap.
+        crate::settings::set_skills_mode(crate::settings::SkillsMode::External)
+            .expect("seed external mode");
+        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        assert!(matches!(action, Action::None));
+        let action = app.on_key(key(KeyCode::Char('y')), &UiData::default());
+        assert!(matches!(
+            action,
+            Action::SetSkillsMode(crate::settings::SkillsMode::Managed)
+        ));
+    }
+
+    #[test]
     #[serial(home_settings)]
     fn settings_openclaw_config_dir_item_opens_text_input() {
         let temp_home = TempDir::new().expect("create temp home");

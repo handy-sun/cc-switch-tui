@@ -1,5 +1,36 @@
 use super::*;
 
+fn pane_title() -> String {
+    if crate::services::SkillService::is_external_mode() {
+        format!(
+            "{}（{}）",
+            texts::skills_management(),
+            texts::tui_settings_skills_mode_label()
+        )
+    } else {
+        texts::skills_management().to_string()
+    }
+}
+
+fn render_external_banner(frame: &mut Frame<'_>, area: Rect, theme: &super::theme::Theme) {
+    let style = if theme.no_color {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.warn)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(style)
+        .title(texts::tui_skills_external_banner());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let hint = Paragraph::new(crate::services::skill::external_mode_message())
+        .style(style)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(hint, inset_left(inner, CONTENT_INSET_LEFT));
+}
+
 pub(super) fn render_skills_installed(
     frame: &mut Frame<'_>,
     app: &App,
@@ -11,7 +42,7 @@ pub(super) fn render_skills_installed(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::skills_management());
+        .title(pane_title());
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -24,7 +55,19 @@ pub(super) fn render_skills_installed(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
+    if app.focus == Focus::Content && crate::services::SkillService::is_external_mode() {
+        // external 模式下只保留只读入口，写操作快捷键不再提示。
+        render_key_bar_center(
+            frame,
+            chunks[0],
+            theme,
+            &[
+                ("Enter", texts::tui_key_details()),
+                ("gg/G", texts::tui_key_edges()),
+                ("f", texts::tui_key_discover()),
+            ],
+        );
+    } else if app.focus == Focus::Content {
         render_key_bar_center(
             frame,
             chunks[0],
@@ -43,7 +86,11 @@ pub(super) fn render_skills_installed(
         );
     }
 
-    render_summary_bar(frame, chunks[1], theme, installed_summary(data));
+    if crate::services::SkillService::is_external_mode() {
+        render_external_banner(frame, chunks[1], theme);
+    } else {
+        render_summary_bar(frame, chunks[1], theme, installed_summary(data));
+    }
 
     let visible = skills_installed_filtered(app, data);
     if visible.is_empty() {

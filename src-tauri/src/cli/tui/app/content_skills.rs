@@ -53,6 +53,23 @@ impl App {
     pub(crate) fn on_skills_installed_key(&mut self, key: KeyEvent, data: &UiData) -> Action {
         let visible = visible_skills_installed(&self.filter, data);
 
+        // external 模式下先拦写操作快捷键：不让用户走进确认弹窗后发现操作被拒。
+        if crate::services::SkillService::is_external_mode()
+            && matches!(
+                key.code,
+                KeyCode::Char('x')
+                    | KeyCode::Char(' ')
+                    | KeyCode::Char('m')
+                    | KeyCode::Char('d')
+                    | KeyCode::Char('i')
+                    | KeyCode::Char('s')
+            )
+        {
+            self.skills_pending_g = false;
+            self.push_toast(texts::tui_skills_external_hint(), ToastKind::Warning);
+            return Action::None;
+        }
+
         match key.code {
             KeyCode::Up => {
                 self.skills_pending_g = false;
@@ -217,6 +234,10 @@ impl App {
                     self.push_toast(texts::tui_toast_skill_already_installed(), ToastKind::Info);
                     return Action::None;
                 }
+                if crate::services::SkillService::is_external_mode() {
+                    self.push_toast(texts::tui_skills_external_hint(), ToastKind::Warning);
+                    return Action::None;
+                }
                 Action::SkillsInstall {
                     spec: skill.key.clone(),
                 }
@@ -283,6 +304,21 @@ impl App {
         data: &UiData,
         directory: &str,
     ) -> Action {
+        if crate::services::SkillService::is_external_mode()
+            && matches!(
+                key.code,
+                KeyCode::Char('x')
+                    | KeyCode::Char(' ')
+                    | KeyCode::Char('m')
+                    | KeyCode::Char('d')
+                    | KeyCode::Char('s')
+                    | KeyCode::Char('S')
+            )
+        {
+            self.push_toast(texts::tui_skills_external_hint(), ToastKind::Warning);
+            return Action::None;
+        }
+
         let Some(skill) = data
             .skills
             .installed

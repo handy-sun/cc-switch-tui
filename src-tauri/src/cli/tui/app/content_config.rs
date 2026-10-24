@@ -730,6 +730,31 @@ impl App {
                     };
                     Action::SetSkillSyncMethod(next)
                 }
+                Some(SettingsItem::SkillsMode) => {
+                    let current = crate::settings::get_skills_mode();
+                    let next = match current {
+                        crate::settings::SkillsMode::Managed => {
+                            crate::settings::SkillsMode::External
+                        }
+                        crate::settings::SkillsMode::External => {
+                            crate::settings::SkillsMode::Managed
+                        }
+                    };
+                    let message = match next {
+                        crate::settings::SkillsMode::External => {
+                            texts::tui_confirm_skills_mode_external()
+                        }
+                        crate::settings::SkillsMode::Managed => {
+                            texts::tui_confirm_skills_mode_managed()
+                        }
+                    };
+                    self.overlay = Overlay::Confirm(ConfirmOverlay {
+                        title: texts::tui_confirm_title().to_string(),
+                        message: message.to_string(),
+                        action: ConfirmAction::SettingsSetSkillsMode { mode: next },
+                    });
+                    Action::None
+                }
                 Some(SettingsItem::SkipClaudeOnboarding) => {
                     let current = crate::settings::get_skip_claude_onboarding();
                     let next = !current;

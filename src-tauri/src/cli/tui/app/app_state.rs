@@ -217,6 +217,7 @@ pub enum Action {
         path: Option<String>,
     },
     SetSkillSyncMethod(crate::services::skill::SyncMethod),
+    SetSkillsMode(crate::settings::SkillsMode),
     SetManagedProxyForCurrentApp {
         app_type: AppType,
         enabled: bool,
@@ -382,6 +383,7 @@ pub enum SettingsItem {
     VisibleApps,
     OpenClawConfigDir,
     SkillSyncMethod,
+    SkillsMode,
     SkipClaudeOnboarding,
     ClaudePluginIntegration,
     SaveShortcut,
@@ -390,11 +392,12 @@ pub enum SettingsItem {
 }
 
 impl SettingsItem {
-    pub const ALL: [SettingsItem; 9] = [
+    pub const ALL: [SettingsItem; 10] = [
         SettingsItem::Language,
         SettingsItem::VisibleApps,
         SettingsItem::OpenClawConfigDir,
         SettingsItem::SkillSyncMethod,
+        SettingsItem::SkillsMode,
         SettingsItem::SkipClaudeOnboarding,
         SettingsItem::ClaudePluginIntegration,
         SettingsItem::SaveShortcut,

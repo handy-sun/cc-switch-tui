@@ -58,6 +58,7 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use proxy::{ProxyConfig, ProxyServerInfo, ProxyStatus};
+pub use services::skill::{SkillsWriteOp, SyncMethod};
 pub use services::{
     AuthService, ConfigService, CredentialStatus, EndpointLatency, ExtraUsage, HealthStatus,
     ManagedAuthAccount, ManagedAuthDeviceCodeResponse, ManagedAuthStatus, McpLiveDriftEntry,
@@ -66,9 +67,10 @@ pub use services::{
     StreamCheckService, SubscriptionQuota, SyncDecision, WebDavSyncService, WebDavSyncSummary,
 };
 pub use settings::{
-    get_enable_claude_plugin_integration, get_skip_claude_onboarding, get_webdav_sync_settings,
-    set_enable_claude_plugin_integration, set_skip_claude_onboarding, set_webdav_sync_settings,
-    update_settings, update_webdav_sync_status, webdav_jianguoyun_preset, AppSettings,
+    get_enable_claude_plugin_integration, get_skills_mode, get_skip_claude_onboarding,
+    get_webdav_sync_settings, set_enable_claude_plugin_integration, set_skills_mode,
+    set_skip_claude_onboarding, set_webdav_sync_settings, update_settings,
+    update_webdav_sync_status, webdav_jianguoyun_preset, AppSettings, SkillsMode, SkillsSettings,
     WebDavSyncSettings, WebDavSyncStatus,
 };
 pub use store::AppState;

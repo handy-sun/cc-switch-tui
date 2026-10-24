@@ -32,4 +32,3 @@ fn get_openclaw_dir() -> std::path::PathBuf {
         .or_else(|| crate::config::home_dir().map(|home| home.join(".openclaw")))
         .unwrap_or_else(|| std::path::PathBuf::from(".openclaw"))
 }
-

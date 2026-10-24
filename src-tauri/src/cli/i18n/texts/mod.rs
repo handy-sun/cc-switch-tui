@@ -7,6 +7,7 @@ mod provider_editor;
 mod provider_management;
 mod providers;
 mod settings_misc;
+mod skills_mode;
 mod toasts;
 mod update;
 
@@ -17,5 +18,6 @@ pub use provider_editor::*;
 pub use provider_management::*;
 pub use providers::*;
 pub use settings_misc::*;
+pub use skills_mode::*;
 pub use toasts::*;
 pub use update::*;

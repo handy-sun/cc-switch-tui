@@ -57,6 +57,7 @@ impl App {
                     ConfirmAction::SettingsSetClaudePluginIntegration { enabled } => {
                         Action::SetClaudePluginIntegration { enabled: *enabled }
                     }
+                    ConfirmAction::SettingsSetSkillsMode { mode } => Action::SetSkillsMode(*mode),
                     ConfirmAction::ProviderApiFormatProxyNotice => Action::None,
                     ConfirmAction::OpenClawDailyMemoryDelete { filename } => {
                         Action::OpenClawDailyMemoryDelete {
@@ -264,9 +265,7 @@ impl App {
             }
             TextSubmit::SettingsSaveShortcut => {
                 let trimmed = raw.trim().to_string();
-                if !trimmed.is_empty()
-                    && super::helpers::parse_shortcut(&trimmed).is_none()
-                {
+                if !trimmed.is_empty() && super::helpers::parse_shortcut(&trimmed).is_none() {
                     self.push_toast(
                         texts::tui_settings_save_shortcut_invalid(),
                         ToastKind::Warning,
@@ -274,7 +273,11 @@ impl App {
                     return Action::None;
                 }
                 Action::SetSaveShortcut {
-                    shortcut: if trimmed.is_empty() { None } else { Some(trimmed) },
+                    shortcut: if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    },
                 }
             }
             TextSubmit::SkillsDiscoverQuery => {
